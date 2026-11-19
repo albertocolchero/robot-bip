@@ -175,6 +175,37 @@ export class Instinct {
   private lastQuestion: { text: string; at: number } | null = null;
   private ringing: Ringing | null = null;
   private missed: Timer[] = [];
+  /** Lo que le dijiste mientras pensaba en otra cosa: te contesta en cuanto termine. */
+  private waitingThought: { text: string; at: number } | null = null;
+  /** Cómo va el oído (para la pestaña «Estado» de los ajustes). */
+  hearing = { partials: 0, finals: 0, ignored: 0, lastAt: 0, lastText: '', errors: 0, lastError: '', toldAt: -Infinity, level: 0, loudest: 0 };
+
+  /** Cómo está Bip por dentro, en frases cortas (pestaña «Estado» de los ajustes). */
+  status(): string[] {
+    const h = this.hearing;
+    const ago = (t: number) => {
+      const s = Math.round((Date.now() - t) / 1000);
+      return s < 60 ? `hace ${s} s` : `hace ${Math.round(s / 60)} min`;
+    };
+    const mind =
+      this.mind.state === 'lista'
+        ? this.mind.thinking
+          ? 'pensando ahora mismo'
+          : 'lista'
+        : this.mind.state === 'descargando'
+          ? `descargando (${Math.round(this.mind.progress * 100)} %)`
+          : this.mind.state;
+    const here = this.people.present().map((p) => p.name ?? '¿?');
+    return [
+      `Micrófono: nivel ${Math.round(h.level * 100)} % (máximo reciente ${Math.round(h.loudest * 100)} %)`,
+      h.lastAt ? `Oído: lo último que oyó fue ${ago(h.lastAt)}: «${h.lastText.slice(0, 40)}»` : 'Oído: aún no ha entendido ninguna palabra',
+      `Frases entendidas: ${h.finals} · ignoradas por no ser para él: ${h.ignored}`,
+      h.errors ? `Fallos del dictado del iPhone: ${h.errors} (último: ${h.lastError})` : 'Fallos del dictado del iPhone: ninguno',
+      `Cerebro: ${mind}`,
+      `Caras delante: ${this.people.faceCount()}${here.length ? ` (reconoce a ${joinNames(here)})` : ''} · mirándole: ${this.attending ? 'sí' : 'no'}`,
+      `Lector de expresiones: ${this.readerState}`,
+    ];
+  }
   lastLight: number | null = null;
 
   constructor(private d: InstinctDeps) {
@@ -637,6 +668,8 @@ export class Instinct {
 
   onSound(e: SoundEvent) {
     const now = performance.now();
+    this.hearing.level = e.level;
+    this.hearing.loudest = Math.max(this.hearing.loudest * 0.995, e.level);
     const speaking = this.engine.speech !== null;
     this.perception.feedSound(e.level, now, speaking, now - this.lastWordsAt < 8000);
     if (this.dancing && !speaking && !this.sleeping && !this.games.playing && this.perception.beat()) {
@@ -711,11 +744,29 @@ export class Instinct {
   }
 
   onHear(e: HearEvent) {
-    if (e.error || !e.text) return;
+    if (e.error) {
+      // el dictado del iPhone está fallando: que se vea (y que lo diga, como mucho cada 10 minutos)
+      this.hearing.errors++;
+      this.hearing.lastError = e.error;
+      this.engine.showNotice(`No consigo oírte bien (${e.error})`, 10_000);
+      const now = performance.now();
+      if (now - this.hearing.toldAt > 10 * 60_000 && !this.sleeping && !this.life.privateMode) {
+        this.hearing.toldAt = now;
+        this.say('triste', 'Tengo problemas para oírte. Mira mis ajustes, en «Estado».');
+      }
+      return;
+    }
+    if (!e.text) return;
     this.engine.markListening();
     const now = performance.now();
     this.lastWordsAt = now;
-    if (!e.final) return;
+    this.hearing.lastAt = Date.now();
+    if (!e.final) {
+      this.hearing.partials++;
+      return;
+    }
+    this.hearing.finals++;
+    this.hearing.lastText = e.text;
     const text = e.text;
     const t = normalize(text);
     this.engine.showHeard(text);
@@ -745,7 +796,9 @@ export class Instinct {
       return;
     }
     if (!addressed) {
-      // no le hablan a él (por teléfono o con otra persona): no interrumpir
+      // no le hablan a él (por teléfono o con otra persona): no interrumpir, pero que se vea por qué
+      this.engine.showHeard(`${text}  · creo que no era para mí (llámame «Bip»)`);
+      this.hearing.ignored++;
       this.life.overheard();
       if (Math.random() < 0.25) this.engine.setEmotion('curioso', 1500);
       return;
@@ -839,7 +892,11 @@ export class Instinct {
     }
     // 12) todo lo demás, a la mente (si ya la tiene)
     if (this.mind.ready) {
-      if (!this.mind.thinking) void this.thinkAbout(text);
+      if (this.mind.thinking) {
+        // está pensando otra cosa (por ejemplo, apuntando lo que habéis hablado): te contesta en cuanto acabe
+        this.waitingThought = { text, at: now };
+        this.engine.setEmotion('pensando', 20_000);
+      } else void this.thinkAbout(text);
       return;
     }
     if (reply) {
@@ -1303,5 +1360,11 @@ export class Instinct {
       }
     }
     if (this.offer && now - this.offer.at > OFFER_MS) this.offer = null;
+    // lo que le dijiste mientras pensaba en otra cosa
+    const w = this.waitingThought;
+    if (w && this.mind.ready && !this.mind.thinking) {
+      this.waitingThought = null;
+      if (now - w.at < 30_000 && !this.sleeping && !this.life.privateMode) void this.thinkAbout(w.text);
+    }
   }
 }

@@ -88,6 +88,14 @@ export function Face({ engine }: { engine: FaceEngine }) {
     );
   }
 
+  if (engine.notice && now < engine.noticeUntil) {
+    texts.push(
+      <Text key="notice" style={[styles.heard, { color: '#FFC247', opacity: 0.9, fontSize: 9.5 * s, top: 42 * s, left: (MX - 210) * s, width: 420 * s }]} numberOfLines={2}>
+        {engine.notice}
+      </Text>,
+    );
+  }
+
   if (engine.badge) {
     texts.push(
       <Text key="badge" style={[styles.badge, { color: glow, fontSize: 9 * s, top: 8 * s, left: 12 * s }]}>

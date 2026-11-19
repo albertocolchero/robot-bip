@@ -19,13 +19,14 @@ export function loadPrefs(): Prefs {
   return { volume: Math.max(0.2, Math.min(1, v)) };
 }
 
-type Tab = 'color' | 'ojos' | 'efecto' | 'sonido' | 'personas';
+type Tab = 'color' | 'ojos' | 'efecto' | 'sonido' | 'personas' | 'estado';
 const TABS: [Tab, string][] = [
   ['color', 'Color'],
   ['ojos', 'Ojos'],
   ['efecto', 'Efecto'],
   ['sonido', 'Voz y silencio'],
   ['personas', 'Personas'],
+  ['estado', 'Estado'],
 ];
 
 type Props = {
@@ -70,6 +71,13 @@ export function Settings({ engine, instinct, first, onClose, onPreviewVoice }: P
     liftFace(engine, 62);
     return () => liftFace(engine, 0);
   }, [engine]);
+
+  // la pestaña «Estado» se actualiza cada segundo
+  useEffect(() => {
+    if (tab !== 'estado') return;
+    const id = setInterval(() => setVersion((v) => v + 1), 1000);
+    return () => clearInterval(id);
+  }, [tab]);
 
   const setTheme = (t: Theme) => {
     setThemeState(t);
@@ -189,6 +197,17 @@ export function Settings({ engine, instinct, first, onClose, onPreviewVoice }: P
                 <Text style={[styles.value, { color: accent }]}>{hour(quiet.quietTo)}</Text>
               </Stepper>
             </View>
+          </>
+        )}
+
+        {tab === 'estado' && (
+          <>
+            {instinct.status().map((line) => (
+              <Text key={line.slice(0, 14)} style={styles.label}>
+                {line}
+              </Text>
+            ))}
+            <Text style={styles.dim}>Si algo no funciona, hazle una captura a esta pantalla.</Text>
           </>
         )}
 

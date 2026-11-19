@@ -207,6 +207,9 @@ export class FaceEngine {
   badge: string | null = null;
   /** Cuenta atrás de un temporizador (arriba a la derecha), o null. */
   timerText: string | null = null;
+  /** Un aviso pequeño arriba (por ejemplo, si no consigue oír bien). */
+  notice = '';
+  noticeUntil = 0;
   /** Sube la cara (por ejemplo, para dejar sitio al panel de ajustes). En unidades lógicas. */
   lift = 0;
   private liftNow = 0;
@@ -261,6 +264,11 @@ export class FaceEngine {
   showHeard(text: string) {
     this.heard = text;
     this.heardUntil = performance.now() + 3500;
+  }
+
+  showNotice(text: string, ms = 6000) {
+    this.notice = text;
+    this.noticeUntil = performance.now() + ms;
   }
 
   /** Cambia de emoción. Si holdMs > 0, vuelve a "neutral" pasado ese tiempo. */
