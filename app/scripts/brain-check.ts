@@ -10,7 +10,8 @@ import { isNo, isYes } from '../src/brain/talk';
 import { StreamSpeech, partialField, speakableEnd } from '../src/brain/streamSpeech';
 import { asksToPlay, offersToPlay } from '../src/brain/games';
 import { weatherQuestion } from '../src/brain/net';
-import { cleanUrl, looksLikeHome, rephrase } from '../src/brain/home';
+import { buildKit, cleanUrl, looksLikeHome, rephrase, type RawState } from '../src/brain/home';
+import { LightShow, chooseVideo, lightScript, parseYouTube, sayableTitle, showAsk, type LightInfo } from '../src/brain/shows';
 import { normalize } from '../src/brain/talk';
 import { cleanWhisper } from '../src/brain/whisperText';
 
@@ -278,5 +279,103 @@ check('coletilla de YouTube', cleanWhisper('¡Gracias por ver el vídeo!'), '');
 check('repite la pista', cleanWhisper('Hola, Bip. ¿Qué tal estás? Hablamos en castellano.'), '');
 check('solo puntos', cleanWhisper('...'), '');
 
-console.log(fails ? `\n${fails} comprobaciones han fallado.` : '\nTodo bien.');
-process.exit(fails ? 1 : 0);
+// ---------------------------------------------------------------- sorpresas con la casa: qué entiende
+const ask = (x: string) => showAsk(normalize(x));
+check('juego de luces', ask('Bip, haz un juego de luces'), { kind: 'luces' });
+check('modo fiesta', ask('pon el modo fiesta'), { kind: 'luces' });
+check('baila con las luces', ask('baila con las luces'), { kind: 'luces' });
+check('sorpréndeme', ask('¡Sorpréndeme!'), { kind: 'sorpresa' });
+check('sin sorpresas', ask('no me hagas más sorpresas'), { kind: 'sorpresas', on: false });
+check('vuelve a las sorpresas', ask('ya puedes hacerme sorpresas'), { kind: 'sorpresas', on: true });
+check('vídeo de gatos en la tele', ask('pon un vídeo de gatos en la tele'), { kind: 'video', query: 'gatos' });
+check('vídeos de cocina', ask('ponme vídeos de cocina'), { kind: 'video', query: 'cocina' });
+check('en youtube recetas', ask('pon en YouTube recetas de croquetas'), { kind: 'video', query: 'recetas de croquetas' });
+check('busca en youtube', ask('busca en youtube a Ibai'), { kind: 'video', query: 'ibai' });
+check('algo en la tele (elige Bip)', ask('pon algo en la tele'), { kind: 'video', query: null });
+check('pon youtube (abre la app)', ask('pon YouTube'), { kind: 'video', query: null, app: true });
+check('«pon la tele» es encenderla', ask('pon la tele'), null);
+check('«enciende la tele» no es sorpresa', ask('enciende la tele'), null);
+check('pon música', ask('pon música'), { kind: 'musica', query: null });
+check('música de jazz', ask('ponme algo de música de jazz'), { kind: 'musica', query: 'jazz' });
+check('pon la radio', ask('pon la radio'), { kind: 'musica', query: null });
+check('emisora concreta', ask('pon la emisora cadena 100'), { kind: 'musica', query: 'cadena 100' });
+check('spotify', ask('pon Spotify en la tele'), { kind: 'spotify' });
+check('quita la música', ask('quita la música'), { kind: 'parar', what: 'musica' });
+check('para el vídeo', ask('para el vídeo'), { kind: 'parar', what: 'video' });
+check('«para» solo no es sorpresa', ask('para'), null);
+check('«busca quién es Cervantes» no es YouTube', ask('busca quién es Cervantes'), null);
+check('«¿qué hora es?» no', ask('¿qué hora es?'), null);
+
+// ---------------------------------------------------------------- sorpresas: qué aparatos encuentra
+const states: RawState[] = [
+  { entity_id: 'light.luz_1', state: 'on', attributes: { friendly_name: 'Luz 1', brightness: 120, color_mode: 'color_temp', color_temp_kelvin: 4000, supported_color_modes: ['color_temp'], min_color_temp_kelvin: 2900, max_color_temp_kelvin: 7000 } },
+  { entity_id: 'light.luz_2', state: 'off', attributes: { friendly_name: 'Luz 2', supported_color_modes: ['color_temp'], min_color_temp_kelvin: 2900, max_color_temp_kelvin: 7000 } },
+  { entity_id: 'light.rota', state: 'unavailable', attributes: { friendly_name: 'Rota' } },
+  { entity_id: 'light.grupo', state: 'on', attributes: { friendly_name: 'Todas', entity_id: ['light.luz_1', 'light.luz_2'] } },
+  { entity_id: 'media_player.salon_tv', state: 'off', attributes: { friendly_name: 'Salón TV' } },
+  { entity_id: 'media_player.tv', state: 'off', attributes: { friendly_name: 'TV' } },
+  { entity_id: 'media_player.nest_mini', state: 'idle', attributes: { friendly_name: 'Nest Mini' } },
+  { entity_id: 'media_player.echo', state: 'idle', attributes: { friendly_name: 'Echo de la cocina' } },
+];
+const kit = buildKit(states, { cast: ['media_player.tv', 'media_player.nest_mini'], atv: ['media_player.salon_tv'] }, normalize);
+check('luces (sin la rota ni el grupo)', kit.lights.map((l) => l.id), ['light.luz_1', 'light.luz_2']);
+check('tele por Android TV', kit.tvRemote, 'media_player.salon_tv');
+check('tele por Cast', kit.tvCast, 'media_player.tv');
+check('altavoz', kit.speaker, 'media_player.nest_mini');
+check('tele apagada', kit.tvOn, false);
+check('la luz sabe cambiar de tono', kit.lights[0].temp, { min: 2900, max: 7000 });
+const guessed = buildKit(states, null, normalize);
+check('sin saber las integraciones: adivina la tele', !!guessed.tvCast, true);
+check('sin saber las integraciones: adivina el altavoz', guessed.speaker, 'media_player.nest_mini');
+
+// ---------------------------------------------------------------- juego de luces: guion y que lo deja todo como estaba
+const lightsNow: LightInfo[] = kit.lights;
+const script = lightScript(lightsNow, 10, () => 0.3);
+check('guion de unos 10 s', script.length, Math.round(10000 / 650));
+check('nunca más de 2 cambios por segundo y luz', script.every((step) => step.length === lightsNow.length), true);
+async function lightShowTests() {
+  const house = new Map<string, Record<string, unknown>>();
+  const calls: string[] = [];
+  let clock = 0;
+  const show = new LightShow(
+    lightsNow,
+    async (service, data) => {
+      calls.push(service);
+      house.set(String(data.entity_id), { service, ...data });
+    },
+    async (ms) => {
+      clock += ms;
+    },
+    () => clock,
+  );
+  let beats = 0;
+  await show.run(6, () => beats++);
+  check('ha bailado', beats > 5 && calls.length > 10, true);
+  check('luz 1 vuelve como estaba', house.get('light.luz_1'), { service: 'turn_on', entity_id: 'light.luz_1', brightness: 120, color_temp_kelvin: 4000 });
+  check('luz 2 vuelve apagada', house.get('light.luz_2'), { service: 'turn_off', entity_id: 'light.luz_2' });
+  const stopped = new LightShow(lightsNow, async (service, data) => void house.set(String(data.entity_id), { service, ...data }), async () => undefined, () => 0);
+  let n = 0;
+  await stopped.run(20, () => {
+    if (++n === 3) stopped.stop();
+  });
+  check('«para» lo corta enseguida', n, 3);
+  check('y aun así deja la luz 2 apagada', house.get('light.luz_2'), { service: 'turn_off', entity_id: 'light.luz_2' });
+}
+
+// ---------------------------------------------------------------- YouTube: leer resultados y elegir
+const page = `<script>var ytInitialData = ${JSON.stringify({
+  contents: [
+    { videoRenderer: { videoId: 'aaaaaaaaaaa', title: { runs: [{ text: 'Directo 24h 🔴' }] }, badges: [{ metadataBadgeRenderer: { label: 'LIVE' } }] } },
+    { videoRenderer: { videoId: 'bbbbbbbbbbb', title: { runs: [{ text: 'Perros graciosos 😂 #perros' }] }, lengthText: { simpleText: '12:30' } } },
+    { videoRenderer: { videoId: 'ccccccccccc', title: { runs: [{ text: 'Un short' }] }, lengthText: { simpleText: '0:40' } } },
+  ],
+})};</script>`;
+const vids = parseYouTube(page);
+check('lee los vídeos', vids.map((v) => v.id), ['aaaaaaaaaaa', 'bbbbbbbbbbb', 'ccccccccccc']);
+check('ni directos ni vídeos de segundos', chooseVideo(vids, () => 0)?.id, 'bbbbbbbbbbb');
+check('título para decirlo', sayableTitle('Perros graciosos 😂 #perros'), 'Perros graciosos');
+
+void lightShowTests().then(() => {
+  console.log(fails ? `\n${fails} comprobaciones han fallado.` : '\nTodo bien.');
+  process.exit(fails ? 1 : 0);
+});

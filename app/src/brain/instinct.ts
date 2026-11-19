@@ -18,12 +18,13 @@ import { Life } from './life';
 import { learn, nameFrom, saveMemory, type Memory } from './memory';
 import type { Mind, Situation } from './mind';
 import { geocode, headlines, sayWeather, search, tidy, weather, weatherQuestion, type Place, type Weather } from './net';
-import { Home, cleanUrl, loadHome, looksLikeHome, saveHome, type HomeConfig } from './home';
+import { Home, SPOTIFY_APP, YOUTUBE_APP, cleanUrl, loadHome, looksLikeHome, saveHome, type HomeConfig, type Kit } from './home';
 import { Log } from './log';
 import { People, type Person, type WhoEvent } from './people';
 import { Perception, type PerceptionEvent } from './perception';
 import { loadPrefs, savePrefs, type Ear } from './prefs';
 import { readJSON, writeJSON } from './store';
+import { LightShow, VIDEO_TOPICS, chooseVideo, findRadio, sayableTitle, searchYouTube, showAsk, type ShowAsk } from './shows';
 import { StreamSpeech } from './streamSpeech';
 import { isNo, isYes, mentionsName, normalize, understand } from './talk';
 import { clockText, parseTimer, sayDuration, Timers, type Timer } from './timers';
@@ -147,6 +148,12 @@ export class Instinct {
   whisperProgress: number | null = null;
   /** La casa (Home Assistant), si la has conectado en Ajustes › Casa. */
   private home: Home | null = null;
+  /** El juego de luces, mientras dura. */
+  private show: LightShow | null = null;
+  /** Lo que Bip ha propuesto poner (un vídeo o música) y espera tu «sí». */
+  private homeOffer: { kind: 'video' | 'musica'; query: string | null; label: string; at: number } | null = null;
+  /** Lo último que ha puesto en la tele o en el altavoz (para «quita la música»). */
+  private playingMedia: { kind: 'video' | 'musica'; entity: string } | null = null;
   private homeNames: string[] = [];
   private homeNamesAt = 0;
   readonly timers = new Timers();
@@ -307,6 +314,7 @@ export class Instinct {
     this.life.speakerName = () => this.speakerName();
     this.life.onName = (name) => this.named(name, this.people.speakerTrack());
     this.life.extraNotes = () => [this.people.describe(), this.timersNote()].filter(Boolean).join(' ');
+    this.life.surprise = () => this.surpriseHome();
 
     this.perception = new Perception((e) => this.onPerceive(e));
     this.games = new Games({
@@ -992,8 +1000,14 @@ export class Instinct {
     if (!this.closing) this.listenFor(CONVERSATION_MS);
 
     // 0) respuestas a lo que Bip acaba de preguntar: quién eres, cómo se llama tu perro, ¿jugamos?
+    if (this.show?.running && /\b(para|parar|basta|stop|quieto|ya vale|vale ya|apaga|deten|corta|suficiente|ya esta)\b/.test(t)) {
+      this.show.stop();
+      this.answer('contento', 'Vale, se acabó la fiesta.');
+      return this.took('casa (parar el juego de luces)');
+    }
     if (this.answerAsking(text, t, now)) return this.took('respuesta a su pregunta (quién eres, tu mascota)');
     if (this.answerOffer(text, t, now)) return this.took('juego (aceptas su propuesta de jugar)');
+    if (this.answerHomeOffer(text, t, now)) return this.took('casa (contestas a su propuesta de sorpresa)');
 
     // 1) juegos
     const wasPlaying = this.games.playing;
@@ -1058,7 +1072,15 @@ export class Instinct {
       this.life.noteTalk(text, learned.text);
       return this.took('recordar algo');
     }
-    // 10) internet: el tiempo, noticias, "busca..."
+    // 10) sorpresas con la casa: juego de luces, vídeos en la tele, música
+    const sa = showAsk(t);
+    if (sa) {
+      this.took(`casa (sorpresa: ${sa.kind})`);
+      if (!this.home) this.answer('neutral', 'Para eso tengo que estar conectado a la casa. Se hace en Ajustes › Casa.');
+      else void this.doShow(sa);
+      return;
+    }
+    // 10b) internet: el tiempo, noticias, "busca..."
     if (this.netIntent(text)) return;
     // 11) la casa: "enciende la luz del salón", "pon a limpiar el robot" (si está conectada)
     if (this.home && looksLikeHome(t, this.homeNames)) {
@@ -1574,6 +1596,259 @@ export class Instinct {
       this.took('casa (sin conexión)');
       this.answer('triste', 'No consigo hablar con la casa. ¿Está encendido el ordenador de Home Assistant?');
     }
+  }
+
+  // ================================================================ sorpresas con la casa
+  private async doShow(a: ShowAsk) {
+    switch (a.kind) {
+      case 'sorpresas': {
+        // savePrefs guarda solo lo que cambia
+        savePrefs({ surprises: a.on });
+        this.answer('contento', a.on ? '¡Bien! De vez en cuando te prepararé alguna sorpresa con la casa.' : 'Vale, nada de sorpresas con la casa. Si cambias de idea, dime «ya puedes hacerme sorpresas».');
+        return;
+      }
+      case 'parar':
+        return this.stopMedia(a.what);
+      case 'luces':
+        await this.lightShow(16, '¡Fiesta de luces!');
+        return;
+      case 'video':
+        return this.putVideo(a.query, !!a.app);
+      case 'musica':
+        return this.putMusic(a.query);
+      case 'spotify':
+        return this.putSpotify();
+      case 'sorpresa':
+        return this.surpriseNow();
+    }
+  }
+
+  /** Algo ha fallado hablando con la casa: lo dice y lo apunta. */
+  private homeFailed(e: unknown, what: string) {
+    const m = String((e as Error)?.message ?? e);
+    this.log.add('fallo', `casa (${what}): ${m}`);
+    this.answer('triste', m === 'token' ? 'La casa no me deja pasar: hay que volver a conectarme en Ajustes › Casa.' : `No he podido ${what}. ¿Está encendido el ordenador de Home Assistant?`);
+  }
+
+  private async getKit(): Promise<Kit | null> {
+    if (!this.home) return null;
+    try {
+      return await this.home.kit();
+    } catch (e) {
+      this.homeFailed(e, 'hablar con la casa');
+      return null;
+    }
+  }
+
+  /** Un juego de luces: enciende, apaga, cambia el brillo (y el color o el tono si la luz puede) y al final deja
+   *  cada luz como estaba. «Para» lo corta. true si ha empezado. */
+  private async lightShow(secs: number, line: string): Promise<boolean> {
+    const home = this.home;
+    if (!home || this.show?.running) return false;
+    const kit = await this.getKit();
+    if (!kit) return false;
+    if (!kit.lights.length) {
+      this.answer('triste', 'No encuentro ninguna luz que pueda manejar en casa.');
+      return false;
+    }
+    const show = new LightShow(kit.lights, (service, data) => home.service('light', service, data));
+    this.show = show;
+    this.log.add('casa', `juego de luces: ${kit.lights.length} ${kit.lights.length === 1 ? 'luz' : 'luces'}, ${secs} s`);
+    this.engine.hop(-0.8);
+    this.engine.burst('note', 4);
+    this.answer('emocionado', line);
+    const wasDancing = this.dancing;
+    this.dancing = true;
+    await show.run(secs, (i) => {
+      if (this.sleeping) return;
+      if (i % 2 === 0) this.engine.hop(-0.4);
+      if (i % 4 === 0) this.engine.burst(i % 8 ? 'sparkle' : 'note', 3);
+      this.engine.setEmotion('feliz', 1500);
+    });
+    this.dancing = wasDancing;
+    if (this.show === show) this.show = null;
+    return true;
+  }
+
+  /** Pone un vídeo de YouTube en la tele: lo que pidas, o algo que elige Bip (query null). */
+  private async putVideo(query: string | null, openApp = false, label?: string) {
+    const home = this.home;
+    if (!home) return;
+    this.engine.setEmotion('pensando', 15_000);
+    const kit = await this.getKit();
+    if (!kit) return;
+    if (!kit.tvRemote && !kit.tvCast) {
+      this.answer('triste', 'No encuentro la tele en la casa. ¿Está conectada a Home Assistant?');
+      return;
+    }
+    try {
+      if (openApp) {
+        this.answer('contento', 'Te abro YouTube en la tele.');
+        await home.openApp(kit, YOUTUBE_APP);
+        this.log.add('casa', 'YouTube abierto en la tele');
+        return;
+      }
+      const topic = query ? { q: query, say: query } : pick(VIDEO_TOPICS);
+      const v = chooseVideo(await searchYouTube(topic.q));
+      if (!v) {
+        this.answer('confundido', `No encuentro vídeos de «${topic.say}».`);
+        return;
+      }
+      this.answer('contento', query ? `Marchando. En la tele: «${sayableTitle(v.title)}».` : `Te pongo en la tele un vídeo de ${label ?? topic.say}.`);
+      const r = await home.playVideo(kit, v.id);
+      this.playingMedia = { kind: 'video', entity: r.entity };
+      this.log.add('casa', `vídeo ${v.id} («${v.title.slice(0, 60)}») por ${r.how}`);
+    } catch (e) {
+      this.homeFailed(e, 'poner el vídeo');
+    }
+  }
+
+  /** Pone una emisora de radio en el altavoz (o en la tele si no hay altavoz). */
+  private async putMusic(query: string | null) {
+    const home = this.home;
+    if (!home) return;
+    this.engine.setEmotion('pensando', 15_000);
+    const kit = await this.getKit();
+    if (!kit) return;
+    if (!kit.speaker && !kit.tvCast) {
+      this.answer('triste', 'No encuentro ningún altavoz en la casa donde poner música.');
+      return;
+    }
+    try {
+      const st = await findRadio(query);
+      if (!st) {
+        this.answer('confundido', query ? `No encuentro ninguna emisora de «${query}».` : 'Ahora no encuentro emisoras.');
+        return;
+      }
+      this.answer('contento', `Te pongo ${st.name}${kit.speaker ? ' en el altavoz' : ' en la tele'}.`);
+      const entity = await home.playRadio(kit, st);
+      this.playingMedia = { kind: 'musica', entity };
+      this.log.add('casa', `radio «${st.name}» en ${entity}`);
+    } catch (e) {
+      this.homeFailed(e, 'poner la música');
+    }
+  }
+
+  private async putSpotify() {
+    const home = this.home;
+    if (!home) return;
+    const kit = await this.getKit();
+    if (!kit) return;
+    if (!kit.tvRemote) {
+      this.answer('neutral', 'Spotify aún no está conectado a la casa. Si quieres, te pongo la radio: dime «pon la radio».');
+      return;
+    }
+    try {
+      this.answerLines('contento', [
+        'Te abro Spotify en la tele.',
+        'Para que yo elija las canciones habría que conectar tu cuenta de Spotify a la casa. Mientras, si quieres, te pongo la radio.',
+      ]);
+      await home.openApp(kit, SPOTIFY_APP);
+      this.log.add('casa', 'Spotify abierto en la tele');
+    } catch (e) {
+      this.homeFailed(e, 'abrir Spotify');
+    }
+  }
+
+  /** «Quita la música», «para el vídeo», «para las luces». */
+  private async stopMedia(what: 'musica' | 'video' | 'luces' | 'todo') {
+    if (what === 'luces') {
+      if (this.show?.running) {
+        this.show.stop();
+        this.answer('contento', 'Vale, se acabó la fiesta.');
+      } else this.answer('neutral', 'No hay ningún juego de luces en marcha.');
+      return;
+    }
+    const home = this.home;
+    if (!home) return;
+    let entity = this.playingMedia && (what === 'todo' || this.playingMedia.kind === what) ? this.playingMedia.entity : null;
+    if (!entity) {
+      const kit = await this.getKit();
+      if (!kit) return;
+      entity = what === 'musica' ? (kit.speaker ?? kit.tvCast) : (kit.tvRemote ?? kit.tvCast);
+    }
+    if (!entity) {
+      this.answer('neutral', 'No encuentro dónde está sonando.');
+      return;
+    }
+    try {
+      await home.service('media_player', what === 'video' ? 'media_pause' : 'media_stop', { entity_id: entity });
+      this.answer('contento', what === 'video' ? 'Vídeo en pausa.' : 'Música fuera.');
+      this.playingMedia = null;
+    } catch (e) {
+      this.homeFailed(e, 'pararlo');
+    }
+  }
+
+  /** «Sorpréndeme»: elige tú, Bip (juego de luces, un vídeo en la tele o música). */
+  private async surpriseNow() {
+    const kit = await this.getKit();
+    if (!kit) return;
+    const options: ('luces' | 'video' | 'musica')[] = [];
+    if (kit.lights.length) options.push('luces');
+    if (kit.tvRemote || kit.tvCast) options.push('video');
+    if (kit.speaker) options.push('musica');
+    if (!options.length) {
+      this.answer('neutral', 'Aún no tengo nada en casa con lo que sorprenderte.');
+      return;
+    }
+    const c = pick(options);
+    if (c === 'luces') await this.lightShow(14, '¡Sorpresa! Mira las luces…');
+    else if (c === 'video') await this.putVideo(null);
+    else await this.putMusic(null);
+  }
+
+  /** Una sorpresa por su cuenta (la decide la vida propia, con sus normas de respeto). El juego de luces lo hace
+   *  directamente (es corto y lo deja todo como estaba); la tele y la música las propone y espera tu «sí».
+   *  Devuelve qué ha hecho, o '' si nada. */
+  private async surpriseHome(): Promise<string> {
+    if (!this.home || !loadPrefs().surprises || this.games.playing || this.show?.running || this.sleeping || this.homeOffer) return '';
+    let kit: Kit;
+    try {
+      kit = await this.home.kit();
+    } catch {
+      return '';
+    }
+    const options: ('luces' | 'video' | 'musica')[] = [];
+    if (kit.lights.length) options.push('luces', 'luces');
+    // si la tele ya está encendida, alguien la está viendo: no se la cambia
+    if ((kit.tvRemote || kit.tvCast) && !kit.tvOn) options.push('video');
+    if (kit.speaker) options.push('musica');
+    if (!options.length) return '';
+    const c = pick(options);
+    if (c === 'luces') {
+      void this.lightShow(10, '¡Sorpresa! Mira las luces…');
+      return 'sorpresa: juego de luces';
+    }
+    if (c === 'video') {
+      const topic = pick(VIDEO_TOPICS);
+      this.homeOffer = { kind: 'video', query: topic.q, label: topic.say, at: performance.now() };
+      this.answer('curioso', `¿Te pongo en la tele un vídeo de ${topic.say}?`);
+      return `sorpresa: propone un vídeo de ${topic.say}`;
+    }
+    this.homeOffer = { kind: 'musica', query: null, label: 'música', at: performance.now() };
+    this.answer('curioso', '¿Te pongo un poco de música en el altavoz?');
+    return 'sorpresa: propone música';
+  }
+
+  /** Contesta a «¿te pongo un vídeo…?» con un «sí» o un «no». true si era eso. */
+  private answerHomeOffer(text: string, t: string, now: number): boolean {
+    const o = this.homeOffer;
+    if (!o) return false;
+    if (now - o.at > OFFER_MS) {
+      this.homeOffer = null;
+      return false;
+    }
+    if (isNo(text)) {
+      this.homeOffer = null;
+      this.answer('contento', pick(['Vale, otro rato.', 'Vale. ¡Me lo guardo para luego!']));
+      return true;
+    }
+    if (!isYes(text)) return false;
+    this.homeOffer = null;
+    if (o.kind === 'video') void this.putVideo(o.query, false, o.label);
+    else void this.putMusic(o.query);
+    return true;
   }
 
   // ================================================================ internet

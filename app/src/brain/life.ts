@@ -175,6 +175,8 @@ export class Life {
   onName: ((name: string) => string) | null = null;
   /** Más cosas que la mente debe saber (quién hay delante, avisos...). */
   extraNotes: (() => string) | null = null;
+  /** Una sorpresa con la casa (la conecta quien maneja la casa). Devuelve qué ha hecho, o ''. */
+  surprise: (() => Promise<string>) | null = null;
 
   get who() {
     return this.speakerName?.() ?? this.d.memory.name ?? 'La persona';
@@ -809,6 +811,19 @@ export class Life {
         j.asked = [...j.asked, q.text].slice(-60);
         this.expect('pregunta', q.text);
         return this.say('pregunta', q);
+      },
+      // 12b. una sorpresa con la casa (juego de luces, o propone un vídeo o música): como mucho una por la
+      // mañana y otra por la tarde, de 10 a 22 h
+      async () => {
+        if (!this.surprise || !budget() || h < 10 || h >= 22) return '';
+        const key = h < 16 ? 'sorpresa-m' : 'sorpresa-t';
+        if (done(key) || Math.random() > 0.35) return '';
+        const did = await this.surprise();
+        if (!did) return '';
+        markDone(j, today, key);
+        note(j, this.d.now(), 'iniciativa', did);
+        this.lastTalkAt = this.d.now();
+        return did;
       },
       // 13. ganas de compañía y no le haces caso
       async () => {

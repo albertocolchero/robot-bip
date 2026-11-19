@@ -93,6 +93,7 @@ export function Settings({ engine, instinct, first, onClose, onPreviewVoice }: P
   const [island, setIsland] = useState(() => loadPrefs().island);
   const [interrupt, setInterrupt] = useState(() => loadPrefs().interrupt);
   const [ear, setEarState] = useState<Ear>(() => loadPrefs().ear);
+  const [surprises, setSurprises] = useState(() => loadPrefs().surprises);
   const [earNote, setEarNote] = useState('');
   const [, setVersion] = useState(0);
   const [confirming, setConfirming] = useState<string | null>(null);
@@ -363,6 +364,19 @@ export function Settings({ engine, instinct, first, onClose, onPreviewVoice }: P
               )}
             </View>
             <Text style={styles.label}>{homeStatus}</Text>
+            <Pressable
+              onPress={() => {
+                setSurprises(!surprises);
+                savePrefs({ surprises: !surprises });
+              }}
+              style={styles.toggleRow}
+            >
+              <View style={[styles.toggle, surprises && { backgroundColor: accent, borderColor: accent }]}>
+                <View style={[styles.knob, surprises && styles.knobOn]} />
+              </View>
+              <Text style={styles.label}>Sorpresas: de vez en cuando hace un juego de luces o te propone poner algo en la tele o música</Text>
+            </Pressable>
+            <Text style={styles.dim}>Pídeselo cuando quieras: «haz un juego de luces», «pon un vídeo de gatos en la tele», «pon la radio», «sorpréndeme». «Para» lo corta.</Text>
             <Text style={styles.dim}>Bip le pasa a Home Assistant las frases que suenan a la casa («apaga todas las luces», «pon a limpiar el robot»). Todo va por tu WiFi, sin internet. El token se guarda solo en este iPhone.</Text>
           </>
         )}

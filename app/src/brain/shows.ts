@@ -54,7 +54,7 @@ export function showAsk(raw: string): ShowAsk | null {
   const vid = /\bvideos?\b/.test(t);
   if (new RegExp(`^${PUT}\\b`).test(t) && (yt || vid || tv)) {
     let q = t
-      .replace(new RegExp(`^${PUT}\\s*`), '')
+      .replace(new RegExp(`^${PUT}\\b\\s*`), '') // (\b: que «ponme» no se quede en «pon» + «me»)
       .replace(ON_TV, ' ')
       .replace(/\s*\b(?:en|de) youtube\b\s*/, ' ')
       .replace(/^youtube\b/, '')

@@ -7,6 +7,7 @@
 // Para conectarse hacen falta la dirección (por ejemplo http://homeassistant.local:8123) y un
 // "token de larga duración" que se crea en Home Assistant (tu perfil › Seguridad). Se guardan solo
 // en este iPhone.
+import type { LightInfo, Station } from './shows';
 import { readJSON, writeJSON } from './store';
 
 export type HomeConfig = { url: string; token: string };
@@ -46,6 +47,71 @@ export function looksLikeHome(t: string, names: string[] = []): boolean {
 
 export type HomeReply = { understood: boolean; speech: string; done: boolean };
 
+/** Lo que Bip puede usar para dar sorpresas: luces, la tele y un altavoz. */
+export type Kit = {
+  lights: LightInfo[];
+  /** La tele por Android TV Remote: sirve para encenderla y abrir vídeos o apps. */
+  tvRemote: string | null;
+  /** La tele por Google Cast. */
+  tvCast: string | null;
+  tvOn: boolean;
+  /** Un altavoz por Google Cast (el Nest Mini). */
+  speaker: string | null;
+};
+
+export type RawState = { entity_id: string; state: string; attributes?: Record<string, unknown> };
+
+// qué integración tiene cada aparato (Home Assistant lo sabe; la lista de estados no lo dice)
+const KIT_TEMPLATE =
+  "{{ {'cast': integration_entities('cast') | list, 'atv': integration_entities('androidtv_remote') | list} | tojson }}";
+
+export const YOUTUBE_APP = 'com.google.android.youtube.tv';
+export const SPOTIFY_APP = 'com.spotify.tv.android';
+
+/** Saca las luces, la tele y el altavoz de la lista de aparatos. platforms: de qué integración es cada uno
+ *  (null si no se ha podido preguntar: entonces se adivina por el nombre). */
+export function buildKit(raw: RawState[], platforms: { cast: string[]; atv: string[] } | null, normalize: (s: string) => string): Kit {
+  const alive = raw.filter((x) => x.state !== 'unavailable' && x.state !== 'unknown');
+  const lights = alive.filter((x) => x.entity_id.startsWith('light.') && !Array.isArray(x.attributes?.entity_id)).map(lightInfo);
+  const players = alive.filter((x) => x.entity_id.startsWith('media_player.'));
+  const words = (x: RawState) => normalize(`${String(x.attributes?.friendly_name ?? '')} ${x.entity_id.replace(/[._]/g, ' ')}`);
+  const tvish = (x: RawState) => x.attributes?.device_class === 'tv' || /\b(tv|tele|television|televisor)\b/.test(words(x));
+  const speakerish = (x: RawState) => x.attributes?.device_class === 'speaker' || /\b(nest|mini|altavoz|speaker|audio|home)\b/.test(words(x));
+  const remote = platforms ? (players.find((x) => platforms.atv.includes(x.entity_id)) ?? null) : null;
+  const casts = platforms ? players.filter((x) => platforms.cast.includes(x.entity_id)) : players.filter((x) => !/\b(echo|alexa)\b/.test(words(x)));
+  const tvCast = casts.find((x) => tvish(x) && !speakerish(x) && x !== remote) ?? null;
+  const speaker = casts.find((x) => x !== tvCast && x !== remote && speakerish(x) && !tvish(x)) ?? null;
+  const off = (x: RawState | null) => !x || x.state === 'off' || x.state === 'standby';
+  return {
+    lights,
+    tvRemote: remote?.entity_id ?? null,
+    tvCast: tvCast?.entity_id ?? null,
+    tvOn: remote ? !off(remote) : !off(tvCast),
+    speaker: speaker?.entity_id ?? null,
+  };
+}
+
+function lightInfo(x: RawState): LightInfo {
+  const a = x.attributes ?? {};
+  const modes = Array.isArray(a.supported_color_modes) ? (a.supported_color_modes as string[]) : [];
+  const num = (v: unknown) => (typeof v === 'number' ? v : null);
+  const minK = num(a.min_color_temp_kelvin);
+  const maxK = num(a.max_color_temp_kelvin);
+  const hs = Array.isArray(a.hs_color) && a.hs_color.length === 2 ? ([Number(a.hs_color[0]), Number(a.hs_color[1])] as [number, number]) : null;
+  return {
+    id: x.entity_id,
+    on: x.state === 'on',
+    brightness: num(a.brightness),
+    mode: typeof a.color_mode === 'string' ? a.color_mode : null,
+    kelvin: num(a.color_temp_kelvin),
+    hs,
+    color: modes.some((m) => /^(hs|xy|rgb|rgbw|rgbww)$/.test(m)),
+    temp: modes.includes('color_temp') && minK && maxK ? { min: minK, max: maxK } : null,
+  };
+}
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
 export class Home {
   private nameCache: { at: number; names: string[] } | null = null;
 
@@ -70,6 +136,77 @@ export class Home {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /** Pide a Home Assistant que haga algo ("light", "turn_on", {...}). */
+  service(domain: string, service: string, data: Record<string, unknown>) {
+    return this.call(`/api/services/${domain}/${service}`, data);
+  }
+
+  /** Las luces, la tele y el altavoz que hay ahora mismo. */
+  async kit(): Promise<Kit> {
+    const raw = (await this.call('/api/states')) as RawState[];
+    let platforms: { cast: string[]; atv: string[] } | null = null;
+    try {
+      platforms = (await this.call('/api/template', { template: KIT_TEMPLATE })) as { cast: string[]; atv: string[] };
+    } catch {
+      platforms = null; // sin permiso para preguntarlo: se adivina por los nombres
+    }
+    return buildKit(raw, platforms, this.normalize);
+  }
+
+  /** Enciende la tele (si hace falta) y espera a que esté lista. */
+  private async tvReady(kit: Kit) {
+    if (kit.tvOn || !kit.tvRemote) return;
+    await this.service('media_player', 'turn_on', { entity_id: kit.tvRemote });
+    for (let i = 0; i < 12; i++) {
+      await sleep(1000);
+      const st = (await this.call(`/api/states/${kit.tvRemote}`).catch(() => null)) as RawState | null;
+      if (st && st.state !== 'off' && st.state !== 'standby') break;
+    }
+    await sleep(2500); // que termine de arrancar
+  }
+
+  /** Pone un vídeo de YouTube en la tele. Devuelve qué aparato lo está poniendo y cómo (para el registro). */
+  async playVideo(kit: Kit, videoId: string): Promise<{ entity: string; how: string }> {
+    await this.tvReady(kit);
+    const url = `https://www.youtube.com/watch?v=${videoId}`;
+    if (kit.tvRemote) {
+      try {
+        await this.service('media_player', 'play_media', { entity_id: kit.tvRemote, media_content_type: 'url', media_content_id: url });
+        return { entity: kit.tvRemote, how: 'Android TV (enlace)' };
+      } catch (e) {
+        if (!kit.tvCast) throw e;
+      }
+    }
+    if (!kit.tvCast) throw new Error('no hay tele');
+    try {
+      await this.service('media_player', 'play_media', {
+        entity_id: kit.tvCast,
+        media_content_type: 'cast',
+        media_content_id: JSON.stringify({ app_name: 'youtube', media_id: videoId }),
+      });
+      return { entity: kit.tvCast, how: 'Google Cast' };
+    } catch {
+      await this.service('media_player', 'play_media', { entity_id: kit.tvCast, media_content_type: 'url', media_content_id: url });
+      return { entity: kit.tvCast, how: 'enlace' };
+    }
+  }
+
+  /** Abre una app en la tele (YouTube, Spotify...). */
+  async openApp(kit: Kit, app: string) {
+    if (!kit.tvRemote) throw new Error('la tele no tiene Android TV Remote');
+    await this.tvReady(kit);
+    await this.service('media_player', 'play_media', { entity_id: kit.tvRemote, media_content_type: 'app', media_content_id: app });
+  }
+
+  /** Pone una emisora en el altavoz (o en la tele si no hay altavoz). Devuelve dónde suena. */
+  async playRadio(kit: Kit, station: Station): Promise<string> {
+    const target = kit.speaker ?? kit.tvCast;
+    if (!target) throw new Error('no hay altavoz');
+    if (target === kit.tvCast) await this.tvReady(kit);
+    await this.service('media_player', 'play_media', { entity_id: target, media_content_type: 'music', media_content_id: station.url });
+    return target;
   }
 
   /** Comprueba la conexión. Devuelve null si va bien, o qué falla, en palabras. */
