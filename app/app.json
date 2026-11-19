@@ -17,7 +17,8 @@
         "UIViewControllerBasedStatusBarAppearance": false,
         "NSCameraUsageDescription": "Bip usa la cámara frontal para verte y seguirte con la mirada. Las imágenes no salen del iPhone.",
         "NSMicrophoneUsageDescription": "Bip usa el micrófono para oír lo que le dices. El sonido no sale del iPhone.",
-        "NSSpeechRecognitionUsageDescription": "Bip convierte tu voz en texto dentro del iPhone para entenderte."
+        "NSSpeechRecognitionUsageDescription": "Bip convierte tu voz en texto dentro del iPhone para entenderte.",
+        "NSPhotoLibraryUsageDescription": "Bip no mira ni guarda tus fotos. Apple pide esta frase porque una de las piezas de la app sabe abrir la fototeca."
       },
       "runtimeVersion": {
         "policy": "appVersion"
