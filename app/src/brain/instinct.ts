@@ -18,6 +18,7 @@ import { Life } from './life';
 import { learn, nameFrom, saveMemory, type Memory } from './memory';
 import type { Mind, Situation } from './mind';
 import { geocode, headlines, sayWeather, search, tidy, weather, weatherQuestion, type Place, type Weather } from './net';
+import { Home, loadHome, looksLikeHome, saveHome, type HomeConfig } from './home';
 import { Log } from './log';
 import { People, type Person, type WhoEvent } from './people';
 import { Perception, type PerceptionEvent } from './perception';
@@ -139,6 +140,10 @@ export class Instinct {
   /** Lo que oye, decide y contesta (Ajustes › Registro), para poder mejorarle. */
   readonly log = new Log();
   private lastLoggedError = { text: '', at: 0 };
+  /** La casa (Home Assistant), si la has conectado en Ajustes › Casa. */
+  private home: Home | null = null;
+  private homeNames: string[] = [];
+  private homeNamesAt = 0;
   readonly timers = new Timers();
   /** El mini Bip de la Isla Dinámica. */
   readonly island: Island;
@@ -271,6 +276,8 @@ export class Instinct {
     this.sayRaw = d.say;
     this.people = new People(d.memory.name);
     this.people.onNote = (m) => this.log.add('caras', m);
+    const homeCfg = loadHome();
+    if (homeCfg) this.useHome(homeCfg);
     const prefs = loadPrefs();
     this.island = new Island(d.engine, this.timers, prefs.island);
     this.setBargeIn(prefs.interrupt);
@@ -1011,7 +1018,17 @@ export class Instinct {
     }
     // 10) internet: el tiempo, noticias, "busca..."
     if (this.netIntent(text)) return;
-    // 11) órdenes y datos exactos: los resuelven las reglas al momento
+    // 11) la casa: "enciende la luz del salón", "pon a limpiar el robot" (si está conectada)
+    if (this.home && looksLikeHome(t, this.homeNames)) {
+      void this.askHome(text, reply, now);
+      return;
+    }
+    this.replyOrThink(text, reply, now);
+  }
+
+  /** Lo que no era de nada concreto: reglas al momento, o la mente. */
+  private replyOrThink(text: string, reply: ReturnType<typeof understand>, now: number) {
+    // 12) órdenes y datos exactos: los resuelven las reglas al momento
     if (reply?.action === 'sleep') {
       this.sleep(reply.text);
       return this.took('dormir');
@@ -1025,7 +1042,7 @@ export class Instinct {
       this.life.noteTalk(text, reply.text);
       return this.took(`reglas (respuesta rápida${reply.action ? `: ${reply.action}` : ''})`);
     }
-    // 12) todo lo demás, a la mente (si ya la tiene)
+    // 13) todo lo demás, a la mente (si ya la tiene)
     if (this.mind.ready) {
       if (this.mind.thinking) {
         // está pensando otra cosa (por ejemplo, apuntando lo que habéis hablado): te contesta en cuanto acabe
@@ -1318,6 +1335,68 @@ export class Instinct {
     }
   }
 
+  // ================================================================ la casa
+  /** Conecta (o desconecta, con null) la casa. Devuelve null si va bien, o qué falla. */
+  async connectHome(cfg: HomeConfig | null): Promise<string | null> {
+    if (!cfg) {
+      this.home = null;
+      this.homeNames = [];
+      saveHome(null);
+      return null;
+    }
+    const h = new Home(cfg, normalize);
+    const problem = await h.check();
+    this.log.add('casa', problem ? `no conecta con ${cfg.url}: ${problem}` : `conectada con ${cfg.url}`);
+    if (problem) return problem;
+    saveHome(cfg);
+    this.useHome(cfg);
+    return null;
+  }
+
+  get homeConnected() {
+    return !!this.home;
+  }
+
+  private useHome(cfg: HomeConfig) {
+    this.home = new Home(cfg, normalize);
+    this.homeNamesAt = 0;
+    void this.refreshHomeNames();
+  }
+
+  private async refreshHomeNames() {
+    if (!this.home || performance.now() - this.homeNamesAt < 10 * 60_000) return;
+    this.homeNamesAt = performance.now();
+    this.homeNames = await this.home.names();
+  }
+
+  /** Le pasa la orden a Home Assistant. Si no era para la casa, sigue el camino normal. */
+  private async askHome(text: string, reply: ReturnType<typeof understand>, now: number) {
+    const home = this.home;
+    if (!home) return this.replyOrThink(text, reply, now);
+    this.engine.setEmotion('pensando', 6000);
+    try {
+      const r = await home.ask(text);
+      if (!r.understood) {
+        // sonaba a la casa pero Home Assistant no la ha entendido: mejor decirlo que inventarse un "hecho"
+        this.log.add('casa', 'Home Assistant no ha entendido la orden');
+        this.took('casa (no entendida)');
+        this.answer('confundido', 'Eso de la casa aún no sé hacerlo. Prueba con otras palabras, como «apaga la tele» o «inicia el robot».');
+        return;
+      }
+      this.took(`casa (${r.done ? 'hecho' : 'respuesta'})`);
+      if (r.done) {
+        this.engine.hop(-0.5);
+        this.engine.burst('sparkle', 4);
+      }
+      this.answer(r.done ? 'contento' : 'neutral', r.speech);
+      this.life.noteTalk(text, r.speech);
+    } catch (e) {
+      this.log.add('fallo', `casa: ${(e as Error).message}`);
+      this.took('casa (sin conexión)');
+      this.answer('triste', 'No consigo hablar con la casa. ¿Está encendido el ordenador de Home Assistant?');
+    }
+  }
+
   // ================================================================ internet
   private netIntent(text: string): boolean {
     const t = normalize(text);
@@ -1525,6 +1604,7 @@ export class Instinct {
     // pasada la media hora de castigo, vuelve a escuchar mientras habla
     if (!this.bargeIn && this.bargeInOffUntil && performance.now() > this.bargeInOffUntil && loadPrefs().interrupt) this.setBargeIn(true);
     this.games.tick();
+    void this.refreshHomeNames(); // los nombres de los aparatos de casa (cada 10 minutos)
     this.ensureFaceReader();
     if (this.place && !this.life.privateMode) {
       this.refreshForecast()

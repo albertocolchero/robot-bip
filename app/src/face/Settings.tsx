@@ -1,8 +1,9 @@
 // Panel de ajustes de Bip: se abre la primera vez, con tres toques seguidos en la pantalla
 // o diciendo "Bip, ajustes". Los cambios se ven al momento en la cara.
 import { useEffect, useState } from 'react';
-import { Platform, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { Keyboard, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { cleanUrl, loadHome } from '../brain/home';
 import type { Instinct } from '../brain/instinct';
 import { clockOf, type LogKind } from '../brain/log';
 import { loadPrefs, savePrefs } from '../brain/prefs';
@@ -10,7 +11,7 @@ import type { FaceEngine } from './engine';
 import { COLORS, EFFECTS, EFFECT_INFO, SHAPES, SHAPE_INFO, saveTheme, type ColorName, type ShapeName, type Theme } from './theme';
 
 const MONO = Platform.select({ ios: 'Menlo', default: 'monospace' });
-type Tab = 'color' | 'ojos' | 'efecto' | 'sonido' | 'isla' | 'personas' | 'estado' | 'registro';
+type Tab = 'color' | 'ojos' | 'efecto' | 'sonido' | 'isla' | 'personas' | 'casa' | 'estado' | 'registro';
 const TABS: [Tab, string][] = [
   ['color', 'Color'],
   ['ojos', 'Ojos'],
@@ -18,6 +19,7 @@ const TABS: [Tab, string][] = [
   ['sonido', 'Voz y silencio'],
   ['isla', 'Mini Bip'],
   ['personas', 'Personas'],
+  ['casa', 'Casa'],
   ['estado', 'Estado'],
   ['registro', 'Registro'],
 ];
@@ -31,6 +33,7 @@ const LOG_COLORS: Record<LogKind, string> = {
   mente: '#B79CFF',
   caras: '#7CF2B0',
   tiempo: '#7CF2B0',
+  casa: '#FFB08A',
   fallo: '#FF5C5C',
 };
 
@@ -85,13 +88,35 @@ export function Settings({ engine, instinct, first, onClose, onPreviewVoice }: P
   const [interrupt, setInterrupt] = useState(() => loadPrefs().interrupt);
   const [, setVersion] = useState(0);
   const [confirming, setConfirming] = useState<string | null>(null);
+  const [homeUrl, setHomeUrl] = useState(() => loadHome()?.url ?? 'http://homeassistant.local:8123');
+  const [homeToken, setHomeToken] = useState(() => loadHome()?.token ?? '');
+  const [homeStatus, setHomeStatus] = useState(() => (instinct.homeConnected ? 'Conectado.' : 'Sin conectar.'));
   const accent = COLORS[theme.color];
+
+  const connectHome = async () => {
+    setHomeStatus('Probando…');
+    const url = cleanUrl(homeUrl);
+    setHomeUrl(url);
+    const problem = await instinct.connectHome({ url, token: homeToken.trim() });
+    setHomeStatus(problem ? `No conecta: ${problem}.` : '¡Conectado! Prueba a decirle «enciende la luz del salón».');
+  };
 
   // mientras el panel está abierto, la cara sube un poco para que se vea
   useEffect(() => {
     liftFace(engine, 62);
     return () => liftFace(engine, 0);
   }, [engine]);
+
+  // al escribir (pestaña «Casa»), el panel sube para que el teclado no lo tape
+  const [keyboard, setKeyboard] = useState(0);
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardWillShow', (e) => setKeyboard(e.endCoordinates.height));
+    const hide = Keyboard.addListener('keyboardWillHide', () => setKeyboard(0));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
 
   // las pestañas «Estado» y «Registro» se actualizan cada segundo
   useEffect(() => {
@@ -127,7 +152,7 @@ export function Settings({ engine, instinct, first, onClose, onPreviewVoice }: P
   const people = instinct.people.persons;
 
   return (
-    <View style={styles.sheet}>
+    <View style={[styles.sheet, keyboard > 0 && { bottom: keyboard }]}>
       <View style={styles.header}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabs}>
           {TABS.map(([k, label]) => (
@@ -269,6 +294,53 @@ export function Settings({ engine, instinct, first, onClose, onPreviewVoice }: P
           </>
         )}
 
+        {tab === 'casa' && (
+          <>
+            <Text style={styles.label}>Conecta a Bip con Home Assistant para que maneje luces, enchufes, el robot o la tele.</Text>
+            <Text style={styles.dim}>Dirección de Home Assistant</Text>
+            <TextInput
+              value={homeUrl}
+              onChangeText={setHomeUrl}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="url"
+              placeholder="http://homeassistant.local:8123"
+              placeholderTextColor="#45524F"
+              style={[styles.input, { borderColor: accent }]}
+            />
+            <Text style={styles.dim}>Token (en Home Assistant: tu perfil › Seguridad › Tokens de acceso de larga duración › Crear token)</Text>
+            <TextInput
+              value={homeToken}
+              onChangeText={setHomeToken}
+              autoCapitalize="none"
+              autoCorrect={false}
+              secureTextEntry
+              placeholder="Pega aquí el token"
+              placeholderTextColor="#45524F"
+              style={[styles.input, { borderColor: accent }]}
+            />
+            <View style={styles.row}>
+              <Pressable onPress={() => void connectHome()} style={[styles.chip, { borderColor: accent }]}>
+                <Text style={[styles.chipText, { color: accent }]}>Conectar</Text>
+              </Pressable>
+              {instinct.homeConnected && (
+                <Pressable
+                  onPress={() => {
+                    void instinct.connectHome(null);
+                    setHomeToken('');
+                    setHomeStatus('Desconectado.');
+                  }}
+                  style={styles.chip}
+                >
+                  <Text style={styles.chipText}>Desconectar</Text>
+                </Pressable>
+              )}
+            </View>
+            <Text style={styles.label}>{homeStatus}</Text>
+            <Text style={styles.dim}>Bip le pasa a Home Assistant las frases que suenan a la casa («apaga todas las luces», «pon a limpiar el robot»). Todo va por tu WiFi, sin internet. El token se guarda solo en este iPhone.</Text>
+          </>
+        )}
+
         {tab === 'registro' && (
           <>
             {instinct.log.summary().map((line) => (
@@ -389,6 +461,7 @@ const styles = StyleSheet.create({
   label: { color: '#C9DDD6', fontFamily: MONO, fontSize: 12, flexShrink: 1 },
   dim: { color: '#6F8580', fontFamily: MONO, fontSize: 11 },
   logLine: { fontFamily: MONO, fontSize: 10.5, lineHeight: 15 },
+  input: { color: '#E6F2EE', fontFamily: MONO, fontSize: 12, borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8 },
   logText: { color: '#C9DDD6' },
   card: { alignItems: 'center', paddingVertical: 8, paddingHorizontal: 10, borderRadius: 12, borderWidth: 1, borderColor: '#2A3236', gap: 6 },
   eyes: { flexDirection: 'row', gap: 6, alignItems: 'center', height: 40 },

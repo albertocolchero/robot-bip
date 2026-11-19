@@ -10,6 +10,7 @@ import { isNo, isYes } from '../src/brain/talk';
 import { StreamSpeech, partialField, speakableEnd } from '../src/brain/streamSpeech';
 import { asksToPlay, offersToPlay } from '../src/brain/games';
 import { weatherQuestion } from '../src/brain/net';
+import { cleanUrl, looksLikeHome, rephrase } from '../src/brain/home';
 import { normalize } from '../src/brain/talk';
 
 let fails = 0;
@@ -252,6 +253,20 @@ check('¿hace frío en la calle?', weatherQuestion('¿Hace frío en la calle?'),
 check('¿cuántos grados hace?', weatherQuestion('¿A cuántos grados estamos? ¿Cuántos grados hace?'), { when: 'hoy', place: null });
 check('un tiempo de perros (no es un sitio)', weatherQuestion('qué tiempo hace hoy, un tiempo de perros'), { when: 'hoy', place: null });
 check('«no tengo tiempo» no es el tiempo', weatherQuestion('no tengo tiempo para eso'), null);
+
+// ---------------------------------------------------------------- la casa (Home Assistant)
+for (const s of ['enciende la tele', 'pon a limpiar el robot', 'apaga todas las luces', '¿está encendida la tele?', 'sube el volumen de la tele']) {
+  check(`«${s}» es de la casa`, looksLikeHome(normalize(s)), true);
+}
+for (const s of ['el Betis jugó fatal', 'pon música', 'qué tiempo hace', 'para, para', 'cuéntame un chiste']) {
+  check(`«${s}» no es de la casa`, looksLikeHome(normalize(s)), false);
+}
+check('«pon a limpiar el robot» → inicia el robot', rephrase(normalize('pon a limpiar el robot')), 'inicia el robot');
+check('«que limpie la aspiradora» → inicia el robot', rephrase(normalize('que limpie la aspiradora')), 'inicia el robot');
+check('«para el robot» → a la base', rephrase(normalize('para el robot')), 'manda el robot a la base');
+check('«pon el robot a cargar» → a la base', rephrase(normalize('pon el robot a cargar')), 'manda el robot a la base');
+check('«apaga la tele» no se toca', rephrase(normalize('apaga la tele')), null);
+check('dirección sin http', cleanUrl('homeassistant.local:8123/'), 'http://homeassistant.local:8123');
 
 console.log(fails ? `\n${fails} comprobaciones han fallado.` : '\nTodo bien.');
 process.exit(fails ? 1 : 0);

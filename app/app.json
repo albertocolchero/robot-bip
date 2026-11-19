@@ -20,7 +20,8 @@
         "NSMicrophoneUsageDescription": "Bip usa el micrófono para oír lo que le dices. El sonido no sale del iPhone.",
         "NSSpeechRecognitionUsageDescription": "Bip convierte tu voz en texto dentro del iPhone para entenderte.",
         "NSPhotoLibraryUsageDescription": "Bip no mira ni guarda tus fotos. Apple pide esta frase porque una de las piezas de la app sabe abrir la fototeca.",
-        "NSSupportsLiveActivities": true
+        "NSSupportsLiveActivities": true,
+        "NSLocalNetworkUsageDescription": "Bip habla con Home Assistant por el WiFi de tu casa para encender luces o poner el robot a limpiar. No sale de tu red."
       },
       "runtimeVersion": {
         "policy": "appVersion"

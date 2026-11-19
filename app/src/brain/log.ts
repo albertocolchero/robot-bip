@@ -12,6 +12,7 @@ export type LogKind =
   | 'mente' // cuánto ha tardado en pensar
   | 'caras' // por qué cree que eres tú (o no)
   | 'tiempo' // el tiempo y los sitios
+  | 'casa' // Home Assistant: órdenes de la casa y conexión
   | 'fallo'; // errores (sin internet, el dictado se apaga...)
 
 export type LogEntry = { t: number; k: LogKind; m: string };
