@@ -8,6 +8,9 @@ import { People } from '../src/brain/people';
 import { parseClock, parseDuration, parseTimer, sayDuration } from '../src/brain/timers';
 import { isNo, isYes } from '../src/brain/talk';
 import { StreamSpeech, partialField, speakableEnd } from '../src/brain/streamSpeech';
+import { asksToPlay, offersToPlay } from '../src/brain/games';
+import { weatherQuestion } from '../src/brain/net';
+import { normalize } from '../src/brain/talk';
 
 let fails = 0;
 function check(what: string, got: unknown, want: unknown) {
@@ -137,6 +140,66 @@ for (let s = 0; s < 40; s++) {
 check('y luego lo saluda por su nombre', dogEvents, ['perro:Toby']);
 people.forgetAll();
 
+// ---------------------------------------------------------------- dos personas a la vez (Luis y Ana)
+{
+  // huellas parecidas entre sí (dos personas de casa, misma luz): la base común pesa más que lo propio
+  const base = fakePrint('casa');
+  const mix = (who: string, k = 0.45) => {
+    const own = fakePrint(who);
+    return base.map((b, i) => b * (1 - k) + own[i] * k);
+  };
+  /** Varias caras delante a la vez durante unos segundos. pos: dónde está cada una (0 izquierda, 1 derecha). */
+  function showMany(people_: { who: string; x: number; size?: number }[], seconds = 5, onStep?: (s: number) => void) {
+    const events: string[] = [];
+    for (let s = 0; s < seconds * 8; s++) {
+      clock += 125;
+      const faces = people_.map((p) => ({ x: p.x, y: 0.5, size: p.size ?? 0.3, confidence: 1, yaw: 0, fp: s % 10 === 0 ? mix(p.who) : undefined }));
+      for (const e of people.feed(faces, undefined, clock)) {
+        events.push(e.kind === 'conocido' || e.kind === 'duda' ? `${e.kind}:${e.person.name}${e.kind === 'conocido' && e.late ? ' (tarde)' : ''}` : e.kind);
+      }
+      onStep?.(s);
+    }
+    return events;
+  }
+  const leave = () => {
+    clock += 5000;
+    people.feed([], undefined, clock);
+  };
+  // cada uno se presenta solo, un par de veces
+  for (const [who, name] of [
+    ['luis', 'Luis'],
+    ['ana', 'Ana'],
+  ]) {
+    for (let k = 0; k < 3; k++) {
+      showMany([{ who, x: 0.5 }], 4, (s) => s === 31 && people.confirm(people.speakerTrack(), name));
+      leave();
+    }
+  }
+  check('Luis solo: le reconoce', showMany([{ who: 'luis', x: 0.5 }], 4), ['conocido:Luis']);
+  leave();
+  check('Ana sola: la reconoce', showMany([{ who: 'ana', x: 0.5 }], 4), ['conocido:Ana']);
+  leave();
+  const both = showMany([
+    { who: 'luis', x: 0.3, size: 0.32 },
+    { who: 'ana', x: 0.7 },
+  ]).sort();
+  check('los dos a la vez: a cada uno por su nombre, sin repetir', both, ['conocido:Ana', 'conocido:Luis']);
+  check('y sabe que están los dos', people.present().map((p) => p.name).sort(), ['Ana', 'Luis']);
+  // os cruzáis: cada uno pasa al sitio del otro de golpe (las caras "cambian de hueco")
+  const crossed = showMany([
+    { who: 'ana', x: 0.32, size: 0.32 },
+    { who: 'luis', x: 0.68 },
+  ]);
+  check('tras cruzaros, no saluda otra vez', crossed.filter((e) => !e.endsWith('(tarde)')), []);
+  check('y quien está más cerca (Ana) es quien le habla', people.speaker()?.name ?? null, 'Ana');
+  leave();
+  check('Luis sigue siendo Luis (no se le ha pegado la cara de Ana)', showMany([{ who: 'luis', x: 0.5 }], 4), ['conocido:Luis']);
+  leave();
+  people.forgetAll();
+}
+check('«es que no lo sé» no es un nombre', nameFrom('es que no lo sé', true), null);
+check('«se llama Ana»', nameFrom('se llama Ana', true), 'Ana');
+
 // ---------------------------------------------------------------- hablar a trozos (modo rápido)
 check('campo a medias', partialField('{"emocion":"feliz","frase":"Hola, qu', 'frase'), { value: 'Hola, qu', done: false });
 check('campo cerrado', partialField('{"emocion":"feliz","frase":"¡Hola!"}', 'frase'), { value: '¡Hola!', done: true });
@@ -167,6 +230,28 @@ check('frase sin terminar: espera', speakableEnd('Hoy hace un día', false, true
   s.finish('contento', 'Es Ariana Grande, una cantante.');
   check('tras «déjame que lo busque», dice la respuesta entera', said, ['Déjame que lo busque.', 'Es Ariana Grande, una cantante.']);
 }
+
+// ---------------------------------------------------------------- jugar solo si se lo pides
+for (const s of ['vamos a jugar', '¿jugamos?', 'a qué podemos jugar', 'quiero jugar a las adivinanzas', 'Bip, juegos', 'echamos una partida']) {
+  check(`«${s}» es querer jugar`, asksToPlay(normalize(s)), true);
+}
+for (const s of ['el Betis jugó fatal ayer', 'mi sobrino tiene un juego nuevo', 'qué jugador es el mejor', 'esto es un juego de niños', 'juego al pádel los martes']) {
+  check(`«${s}» no es querer jugar`, asksToPlay(normalize(s)), false);
+}
+check('«¿Jugamos a algo?» es proponer', offersToPlay(normalize('¿Jugamos a algo? Di «a qué podemos jugar».')), true);
+check('«¿Qué juego te gusta?» no es proponer', offersToPlay(normalize('¿Qué juego te gusta más?')), false);
+
+// ---------------------------------------------------------------- el tiempo
+check('¿qué tiempo hace?', weatherQuestion('¿Qué tiempo hace?'), { when: 'hoy', place: null });
+check('el tiempo que hace en mi pueblo', weatherQuestion('dime el tiempo que hace en mi pueblo'), { when: 'hoy', place: null });
+check('temperatura en Ronda', weatherQuestion('¿Qué temperatura hace en Ronda?'), { when: 'hoy', place: 'Ronda' });
+check('en Ronda, Málaga', weatherQuestion('qué tiempo hace en Ronda, Málaga'), { when: 'hoy', place: 'Ronda, Málaga' });
+check('mañana en Sevilla', weatherQuestion('¿Va a llover mañana en Sevilla?'), { when: 'mañana', place: 'Sevilla' });
+check('en Ronda mañana', weatherQuestion('qué tiempo hará en Ronda mañana'), { when: 'mañana', place: 'Ronda' });
+check('¿hace frío en la calle?', weatherQuestion('¿Hace frío en la calle?'), { when: 'hoy', place: null });
+check('¿cuántos grados hace?', weatherQuestion('¿A cuántos grados estamos? ¿Cuántos grados hace?'), { when: 'hoy', place: null });
+check('un tiempo de perros (no es un sitio)', weatherQuestion('qué tiempo hace hoy, un tiempo de perros'), { when: 'hoy', place: null });
+check('«no tengo tiempo» no es el tiempo', weatherQuestion('no tengo tiempo para eso'), null);
 
 console.log(fails ? `\n${fails} comprobaciones han fallado.` : '\nTodo bien.');
 process.exit(fails ? 1 : 0);

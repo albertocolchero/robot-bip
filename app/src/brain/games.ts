@@ -42,6 +42,20 @@ export const GAME_LIST: { name: GameName; title: string; re: RegExp }[] = [
   { name: 'adivinanzas', title: 'adivinanzas', re: /\b(adivinanzas?|acertijos?)\b/ },
 ];
 
+/** ¿Le estás pidiendo jugar? ("vamos a jugar", "¿jugamos?", "a qué podemos jugar").
+ *  No vale con decir "juego", "jugó" o "jugador" en medio de otra conversación. (Texto ya normalizado.) */
+export function asksToPlay(t: string) {
+  return (
+    /\b(jugamos|juguemos|jugar a|jugar al|jugar con|jugar contigo|jugar un rato|vamos a jugar|quiero jugar|quieres jugar|me apetece jugar|podemos jugar|a que jugamos|una partida|otra partida|echamos una|algun juego|que juegos)\b/.test(t) ||
+    /^(jugar|a jugar|juego|juegos)$/.test(t.replace(/^(bip|vip|pip)\s+/, ''))
+  );
+}
+
+/** ¿Bip acaba de proponer jugar? ("¿Jugamos a algo?", "¿Revancha?"). Si no, un "sí" no es para jugar. */
+export function offersToPlay(t: string) {
+  return /\b(jugamos|juguemos|quieres jugar|te apetece jugar|vamos a jugar|echamos una|otra partida|revancha|a que jugamos)\b/.test(t);
+}
+
 /** 1.6 → "1,6" (en castellano, coma decimal). */
 const decimal = (n: number) => n.toFixed(1).replace('.', ',');
 
@@ -585,7 +599,7 @@ export class Games {
     if (this.last && now - this.endedAt < 60_000 && /\b(otra vez|otra|revancha|de nuevo|repetir|otra partida)\b/.test(t)) {
       return this.start(this.last);
     }
-    const wantsToPlay = /\b(jug[a-z]*|jueg[a-z]*|partida)\b/.test(t);
+    const wantsToPlay = asksToPlay(t);
     const choosing = now < this.choosingUntil;
     if (wantsToPlay || choosing) {
       const g = GAME_LIST.find((x) => x.re.test(t));

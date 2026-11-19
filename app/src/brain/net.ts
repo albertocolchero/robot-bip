@@ -14,7 +14,7 @@ async function get(url: string, headers: Record<string, string> = {}): Promise<R
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
-    const r = await fetch(url, { headers: { 'Api-User-Agent': UA, ...headers }, signal: ctrl.signal });
+    const r = await fetch(url, { headers, signal: ctrl.signal });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return r;
   } finally {
@@ -37,7 +37,8 @@ async function wikipedia(q: string): Promise<Found | null> {
   const url =
     'https://es.wikipedia.org/w/api.php?action=query&generator=search&gsrlimit=1&prop=extracts&exintro=1' +
     `&explaintext=1&exsentences=6&format=json&formatversion=2&origin=*&gsrsearch=${encodeURIComponent(q)}`;
-  const j = (await (await get(url)).json()) as { query?: { pages?: { title: string; extract?: string }[] } };
+  // Wikipedia pide que digas quién eres (el resto de servicios no lo necesita)
+  const j = (await (await get(url, { 'Api-User-Agent': UA })).json()) as { query?: { pages?: { title: string; extract?: string }[] } };
   const p = j.query?.pages?.[0];
   if (!p?.extract) return null;
   return { source: 'Wikipedia', title: p.title, text: tidy(p.extract, 700) };
@@ -82,11 +83,68 @@ export async function search(q: string): Promise<Found | null> {
 }
 
 // ------------------------------------------------------------------ el tiempo
-export async function geocode(city: string): Promise<Place | null> {
-  const url = `https://geocoding-api.open-meteo.com/v1/search?count=1&language=es&format=json&name=${encodeURIComponent(city)}`;
-  const j = (await (await get(url)).json()) as { results?: { name: string; latitude: number; longitude: number }[] };
-  const r = j.results?.[0];
-  return r ? { name: r.name, lat: r.latitude, lon: r.longitude } : null;
+type GeoResult = { name: string; latitude: number; longitude: number; country_code?: string; admin1?: string; admin2?: string; admin3?: string; population?: number };
+
+const plain = (s: string) =>
+  s
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/^(provincia|comunidad autonoma) de /, '')
+    .trim();
+
+/** Busca un sitio: "Ronda", "Ronda, Málaga", "Ronda (Málaga)" o "Ronda Málaga".
+ *  Prefiere España y, si dices la provincia, la que coincida. */
+export async function geocode(query: string): Promise<Place | null> {
+  const clean = query.replace(/[.!?¿¡]/g, '').trim();
+  const [first, ...more] = clean.split(/[,(]/);
+  const tries: { name: string; hint: string }[] = [{ name: first.trim(), hint: plain(more.join(' ').replace(/\)/g, '')) }];
+  // "Ronda Málaga", sin coma: prueba también solo con la primera palabra y el resto como pista
+  const words = first.trim().split(/\s+/);
+  if (!more.length && words.length > 1) tries.push({ name: words[0], hint: plain(words.slice(1).join(' ')) });
+  for (const { name, hint } of tries) {
+    if (name.length < 2) continue;
+    const url = `https://geocoding-api.open-meteo.com/v1/search?count=10&language=es&format=json&name=${encodeURIComponent(name)}`;
+    const j = (await (await get(url)).json()) as { results?: GeoResult[] };
+    const results = j.results ?? [];
+    if (!results.length) continue;
+    const score = (r: GeoResult) => {
+      let s = r.country_code === 'ES' ? 2 : 0;
+      if (hint && [r.admin1, r.admin2, r.admin3].some((a) => a && (plain(a).includes(hint) || hint.includes(plain(a))))) s += 4;
+      if (r.population) s += Math.log10(r.population) / 10;
+      return s;
+    };
+    const best = [...results].sort((a, b) => score(b) - score(a))[0];
+    if (hint && score(best) < 4 && tries.length > 1 && name === tries[0].name) continue; // la pista no encaja: probar la otra forma
+    const province = best.admin2 ? best.admin2.replace(/^Provincia de /, '') : '';
+    const label = province && plain(province) !== plain(best.name) ? `${best.name} (${province})` : best.name;
+    return { name: label, lat: best.latitude, lon: best.longitude };
+  }
+  return null;
+}
+
+/** ¿Pregunta por el tiempo? Devuelve para cuándo y, si lo dice, dónde ("¿qué tiempo hace en Ronda?").
+ *  place = null: donde vives (o "en mi pueblo", "aquí", "en la calle"). */
+export function weatherQuestion(text: string): { when: 'hoy' | 'mañana'; place: string | null } | null {
+  const t = plain(text).replace(/[¿?¡!.,]/g, ' ').replace(/\s+/g, ' ').trim();
+  const asks =
+    /\b(que tiempo|tiempo hace|tiempo que hace|tiempo va a hacer|tiempo que va a hacer|tiempo hara|tiempo que hara|que tal el tiempo|como esta el tiempo|como va el tiempo|dime el tiempo|mira el tiempo|mirame el tiempo|el tiempo de hoy|el tiempo para|el tiempo en|el tiempo de manana|prevision|pronostico)\b/.test(t) ||
+    /\b(va a llover|llovera|llueve|esta lloviendo|va a haber lluvia|hay lluvia|temperatura|cuantos grados|a cuantos grados|grados hace|grados hay|hace frio|hace calor|hace bueno|hace malo|que calor hace|que frio hace|hace sol|paraguas|me abrigo|abrigarme|chaqueta)\b/.test(t);
+  if (!asks) return null;
+  const when = /\bmanana\b/.test(t) && !/\bmanana\b.*\b(tarde|noche)\b.*\bhoy\b/.test(t) ? 'mañana' : 'hoy';
+  // "... en Ronda", "... en Ronda, Málaga", "el tiempo de Málaga" (al final de la frase).
+  // Con "de" solo tras "el tiempo"/"la temperatura": "un tiempo de perros" no es un sitio.
+  const m = text.match(/(?:\b(?:en|por)|\b(?:el tiempo|la temperatura|el clima) de)\s+([A-Za-zÁÉÍÓÚÜÑáéíóúüñ][A-Za-zÁÉÍÓÚÜÑáéíóúüñ ,()-]{1,40})[?.!]*\s*$/i);
+  let place: string | null = null;
+  if (m) {
+    const p = m[1]
+      .replace(/\s+(hoy|manana|mañana|ahora|ahora mismo|esta tarde|esta noche|este finde|este fin de semana|por la tarde|por la noche|por la manana|por la mañana)\s*$/i, '')
+      .replace(/[,\s]+$/, '')
+      .trim();
+    const home = /^(mi pueblo|mi ciudad|mi casa|casa|aqui|aquí|la calle|calle|fuera|este pueblo|esta ciudad|el pueblo|la ciudad|hoy|manana|mañana|ahora|la tarde|la noche|la manana|la mañana|grados|tiempo|el dia|el día)$/i;
+    if (p.length >= 2 && !home.test(p) && !/^(que|cuanto|cuantos|como)\b/i.test(plain(p))) place = p;
+  }
+  return { when, place };
 }
 
 /** Códigos del tiempo de la OMM, en palabras. */

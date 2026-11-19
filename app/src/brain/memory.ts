@@ -45,7 +45,9 @@ const NOT_NAMES =
 export function nameFrom(raw: string, loose = false): string | null {
   const strict = raw.match(/(?:me llamo|mi nombre es|ll[aá]mame)\s+(.+)/i);
   const soy = loose ? raw.match(/\bsoy\s+(.+)/i) : null;
-  let src = strict?.[1] ?? soy?.[1];
+  // al preguntarle por otra persona: "se llama Ana", "es Ana", "ella es Ana"
+  const third = loose ? raw.match(/^\s*(?:se llama|(?:ella|él|el|esta|este)\s+es|es)\s+(.+)/i) : null;
+  let src = strict?.[1] ?? soy?.[1] ?? third?.[1];
   // solo una o dos palabras sueltas ("Ana", "Ana García"): si no, es otra frase
   const bare = !src && loose && raw.trim().replace(/[.!¡¿?,]/g, ' ').trim().split(/\s+/).length <= 3;
   if (bare) src = raw;

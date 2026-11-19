@@ -306,7 +306,8 @@ export class Life {
     moodEvent(this.mood, 'aprendido');
   }
 
-  /** Si Bip estaba esperando la respuesta a una pregunta suya, la trata. Devuelve qué contestar (o null). */
+  /** Si Bip estaba esperando la respuesta a una pregunta suya, la trata. Devuelve qué contestar
+   *  (o '' si ya se encarga otro, como la ciudad; o null si no era la respuesta). */
   answered(text: string): string | null {
     const p = this.pending;
     const now = this.d.now();
@@ -324,10 +325,16 @@ export class Life {
       return `¡Encantado, ${name}! Me acordaré.`;
     }
     if (p.kind === 'ciudad') {
-      const city = text.replace(/^(en|vivo en|estoy en|desde)\s+/i, '').replace(/[.!?]/g, '').trim();
-      if (city.length < 2 || city.split(/\s+/).length > 4) return null;
-      this.cityHandler?.(city);
-      return null;
+      // "Ronda", "en Ronda, Málaga", "vivo en Ronda, un pueblo de Málaga"
+      const city = text
+        .replace(/^(pues|bueno|vale|oye|mira)[\s,]+/i, '')
+        .replace(/^(en|vivo en|estoy en|desde|soy de|es)\s+/i, '')
+        .replace(/[,\s]+(?:que esta en|que está en|un pueblo de|un pueblo en|una ciudad de|en la provincia de|provincia de|en)\s+/i, ', ')
+        .replace(/[.!?¡¿]/g, '')
+        .trim();
+      if (city.length < 2 || city.split(/\s+/).length > 5 || !this.cityHandler) return null;
+      this.cityHandler(city);
+      return '';
     }
     note(this.journal, now, 'aprendido', `Le pregunté «${p.q}» y me dijo «${text}»`);
     this.dialog.push(`Bip: ${p.q}`, `${this.who}: ${text}`);

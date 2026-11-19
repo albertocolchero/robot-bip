@@ -38,18 +38,29 @@ type Track = {
   sure: boolean;
   fps: number[][];
   geos: number[][];
-  decided: boolean;
+  /** Cuántas huellas ha recibido en total, y con cuántas decidió la última vez. */
+  prints: number;
+  checked: number;
+  /** ¿Ya ha dicho algo de esta cara (saludo, "¿eres...?", "¿cómo te llamas?")? Entonces no vuelve a preguntar. */
+  spoken: boolean;
+  /** Personas que esta cara ha dicho que no es ("no soy Luis"). */
+  rejected: string[];
   lastSampleAt: number;
 };
 
 export type WhoEvent =
-  | { kind: 'conocido'; track: number; person: Person; absentMs: number }
+  /** late: lo ha sabido después de dudar (o tras cruzaros): no hace falta saludar otra vez. */
+  | { kind: 'conocido'; track: number; person: Person; absentMs: number; late?: boolean }
   | { kind: 'duda'; track: number; person: Person; other?: Person }
   | { kind: 'nuevo'; track: number }
   | { kind: 'mascota'; animal: 'perro' | 'gato'; pet: Person | null };
 
 const FILE = 'personas.json';
-const MAX_SAMPLES = 24;
+const MAX_SAMPLES = 32;
+/** Para reconocerte le bastan 2 huellas; para dudar o preguntar, espera a tener 4 (o 6 segundos). */
+const SURE_PRINTS = 2;
+const ASK_PRINTS = 4;
+const ASK_AFTER_MS = 6000;
 
 function cosDist(a: number[], b: number[]) {
   let dot = 0;
@@ -69,6 +80,27 @@ function geoDist(a: number[], b: number[]) {
   const n = Math.min(a.length, b.length);
   for (let i = 0; i < n; i++) s += Math.abs(a[i] - b[i]) / Math.max(0.05, (a[i] + b[i]) / 2);
   return n ? s / n : 0;
+}
+
+/** Si hay demasiadas huellas, quita la más repetida (la que más se parece a otra), no la más vieja:
+ *  así recuerda cómo eres con distintas luces y días, y no solo cómo estabas hace un rato. */
+function keepVaried(list: number[][], dist: (a: number[], b: number[]) => number) {
+  const out = [...list];
+  while (out.length > MAX_SAMPLES) {
+    let drop = 0;
+    let closest = Infinity;
+    for (let i = 0; i < out.length; i++) {
+      for (let j = i + 1; j < out.length; j++) {
+        const d = dist(out[i], out[j]);
+        if (d < closest) {
+          closest = d;
+          drop = i; // de las dos más parecidas, se queda la más reciente
+        }
+      }
+    }
+    out.splice(drop, 1);
+  }
+  return out;
 }
 
 /** Lo cerca que está un conjunto de huellas de las de una persona (menos = más parecido). */
@@ -129,6 +161,13 @@ export class People {
   }
 
   // ---------------------------------------------------------------- caras
+  /** Para el registro: por qué ha decidido lo que ha decidido (puntuaciones de cada cara). */
+  onNote: ((text: string) => void) | null = null;
+
+  private note(text: string) {
+    this.onNote?.(text);
+  }
+
   /** Recibe las caras de un fotograma. Devuelve lo que haya que decir (reconocido, duda, nuevo). */
   feed(faces: SeenFace[], geo: number[] | undefined, t = this.now()): WhoEvent[] {
     const events: WhoEvent[] = [];
@@ -141,19 +180,32 @@ export class People {
         .filter((c) => c.d < 0.25)
         .sort((a, b) => a.d - b.d)[0]?.x;
       if (!tr) {
-        tr = { id: this.nextTrack++, x: f.x, y: f.y, size: f.size, firstAt: t, lastAt: t, personId: null, sure: false, fps: [], geos: [], decided: false, lastSampleAt: 0 };
+        tr = {
+          id: this.nextTrack++,
+          x: f.x,
+          y: f.y,
+          size: f.size,
+          firstAt: t,
+          lastAt: t,
+          personId: null,
+          sure: false,
+          fps: [],
+          geos: [],
+          prints: 0,
+          checked: 0,
+          spoken: false,
+          rejected: [],
+          lastSampleAt: 0,
+        };
         this.tracks.push(tr);
       }
       used.add(tr.id);
       Object.assign(tr, { x: f.x, y: f.y, size: f.size, lastAt: t });
-      if (f.fp) tr.fps = [...tr.fps, f.fp].slice(-8);
-      if (geo && f === largest) tr.geos = [...tr.geos, geo].slice(-8);
-      if (tr.sure && tr.personId) this.learnMore(tr, t);
-      if (!tr.decided && tr.fps.length >= 2 && t - tr.firstAt > 1500) {
-        tr.decided = true;
-        const ev = this.decide(tr, t);
-        if (ev) events.push(ev);
+      if (f.fp) {
+        tr.fps = [...tr.fps, f.fp].slice(-8);
+        tr.prints++;
       }
+      if (geo && f === largest) tr.geos = [...tr.geos, geo].slice(-8);
     }
     // caras que se han ido
     for (const tr of this.tracks) {
@@ -163,42 +215,117 @@ export class People {
       }
     }
     this.tracks = this.tracks.filter((tr) => t - tr.lastAt <= 2500);
+    // y ahora, quién es cada una (todas a la vez: si sois dos, no os puede confundir con la misma persona)
+    const now = this.tracks.filter((tr) => tr.lastAt === t);
+    // primero, las que ya conocía: ¿siguen siendo quien creía? (si os cruzáis, se cambian de hueco)
+    for (const tr of now) if (tr.sure && tr.personId && tr.prints !== tr.checked) this.verify(tr);
+    for (const tr of now) {
+      if (tr.sure && tr.personId) this.learnMore(tr, t);
+      // sin decidir aún (o dudando): vuelve a mirar con cada huella nueva
+      else if (tr.prints !== tr.checked && tr.fps.length >= SURE_PRINTS && t - tr.firstAt > 1500) {
+        const ev = this.decide(tr, t);
+        if (ev) events.push(ev);
+      }
+      tr.checked = tr.prints;
+    }
     return events;
   }
 
+  /** A quién se parece esta cara, de más a menos, sin contar a quien ya está en otra cara. */
+  private rank(tr: Track) {
+    const others = this.tracks.filter((x) => x !== tr);
+    const busy = new Set(others.filter((x) => x.sure && x.personId).map((x) => x.personId as string));
+    const candidates = this.humans.filter((p) => !busy.has(p.id) && !tr.rejected.includes(p.id));
+    let ranked = candidates
+      .filter((p) => p.fps.length)
+      .map((p) => ({ p, s: scoreOf(p, tr.fps, tr.geos) }))
+      .sort((a, b) => a.s - b.s);
+    // dos caras a la vez: si la otra se parece aún más a la misma persona, esa persona es la otra
+    for (const o of others) {
+      if (o.sure || o.fps.length < SURE_PRINTS || ranked.length < 2) continue;
+      const top = ranked[0];
+      const theirs = scoreOf(top.p, o.fps, o.geos);
+      const theirBest = Math.min(
+        ...candidates.filter((p) => p.fps.length && !o.rejected.includes(p.id)).map((p) => scoreOf(p, o.fps, o.geos)),
+      );
+      if (theirs <= theirBest && theirs < top.s) ranked = ranked.slice(1);
+    }
+    return { candidates, ranked };
+  }
+
   private decide(tr: Track, t: number): WhoEvent | null {
-    const busy = new Set(this.tracks.filter((x) => x !== tr && x.sure && x.personId).map((x) => x.personId));
-    const known = this.humans.filter((p) => !busy.has(p.id));
-    const withFace = known.filter((p) => p.fps.length);
-    if (!withFace.length) {
+    const { candidates, ranked } = this.rank(tr);
+    const [best, second] = ranked;
+    if (!best) {
+      if (tr.spoken) return null;
+      tr.spoken = true;
       // conoce un nombre pero aún no su cara: "¿Eres Luis?"
-      const named = known.find((p) => p.name);
+      const named = candidates.find((p) => p.name);
       if (named) {
         tr.personId = named.id;
+        this.note(`cara ${tr.id}: aún no conozco la cara de nadie; pregunto si es ${named.name}`);
         return { kind: 'duda', track: tr.id, person: named };
       }
+      this.note(`cara ${tr.id}: no conozco a nadie con cara; pregunto el nombre`);
       return { kind: 'nuevo', track: tr.id };
     }
-    const ranked = withFace.map((p) => ({ p, s: scoreOf(p, tr.fps, tr.geos) })).sort((a, b) => a.s - b.s);
-    const [best, second] = ranked;
-    const sure = best.p.spread > 0 && best.s <= best.p.spread * 2.5;
+    const sp = best.p.spread;
+    const scores = ranked
+      .slice(0, 3)
+      .map((r) => `${r.p.name ?? '?'} ${r.s.toFixed(3)}`)
+      .join(', ');
+    const why = `cara ${tr.id} (${tr.fps.length} huellas): ${scores}; margen de ${best.p.name ?? '?'} ${sp ? (sp * 2.5).toFixed(3) : 'sin aprender'}`;
+    // seguro: se parece a alguien dentro de lo que suele variar su cara, y bastante más que al siguiente
     const clear = !second || best.s < second.s * 0.7;
-    if (sure && clear) {
+    const close = sp > 0 && best.s <= sp * 2.5;
+    const apart = !!second && best.s < second.s * 0.55 && (sp === 0 || best.s <= sp * 5);
+    if (clear && (close || apart)) {
+      const late = tr.spoken;
       tr.personId = best.p.id;
       tr.sure = true;
+      tr.spoken = true;
+      // una persona no puede ser dos caras: si otra cara dudaba de ella, deja de hacerlo
+      for (const o of this.tracks) if (o !== tr && !o.sure && o.personId === best.p.id) o.personId = null;
       const absent = best.p.lastSeen ? t - best.p.lastSeen : Infinity;
       this.updateSpread(best.p, tr.fps);
       best.p.lastSeen = t;
       this.save();
-      return { kind: 'conocido', track: tr.id, person: best.p, absentMs: absent };
+      this.note(`${why} → es ${best.p.name}${late ? ' (ahora sí)' : ''}`);
+      return { kind: 'conocido', track: tr.id, person: best.p, absentMs: absent, late };
     }
+    // ya preguntó por esta cara: no vuelve a preguntar (sigue mirando por si se aclara)
+    if (tr.spoken) {
+      tr.personId = best.p.id;
+      return null;
+    }
+    // para dudar o decir que no te conoce, espera a tener más huellas
+    if (tr.fps.length < ASK_PRINTS && t - tr.firstAt < ASK_AFTER_MS) return null;
+    tr.spoken = true;
     // alguien muy distinto de todos los que conoce es una persona nueva
     // (si se equivoca y eres tú, al decirle tu nombre aprende que tu cara varía más de lo que creía)
-    if (best.p.spread > 0 && best.s > best.p.spread * 8 && (!second || best.s > second.s * 0.8)) {
+    if (sp > 0 && best.s > sp * 8 && (!second || best.s > second.s * 0.8)) {
+      this.note(`${why} → no se parece a nadie: pregunto el nombre`);
       return { kind: 'nuevo', track: tr.id };
     }
     tr.personId = best.p.id;
-    return { kind: 'duda', track: tr.id, person: best.p, other: second && best.s > second.s * 0.85 ? second.p : undefined };
+    const other = second && best.s > second.s * 0.85 ? second.p : undefined;
+    this.note(`${why} → dudo: ¿${best.p.name}${other ? ` o ${other.name}` : ''}?`);
+    return { kind: 'duda', track: tr.id, person: best.p, other };
+  }
+
+  /** Con cada huella nueva, comprueba que sigue siendo quien creía (si os cruzáis, las caras se pueden cambiar de sitio). */
+  private verify(tr: Track) {
+    const p = this.byId(tr.personId);
+    if (!p || tr.fps.length < 2) return;
+    const recent = tr.fps.slice(-2);
+    const geos = tr.geos.slice(-2);
+    const mine = scoreOf(p, recent, geos);
+    // se compara con todos (también con quien está en la otra cara: si os habéis cruzado, las dos están mal)
+    const rival = Math.min(Infinity, ...this.humans.filter((q) => q !== p && q.fps.length).map((q) => scoreOf(q, recent, geos)));
+    if (rival < mine * 0.6 && (!p.spread || mine > p.spread * 2.5)) {
+      this.note(`cara ${tr.id}: ya no parece ${p.name} (${mine.toFixed(3)} frente a ${rival.toFixed(3)}); vuelvo a mirar`);
+      Object.assign(tr, { sure: false, personId: null, fps: recent, geos, firstAt: tr.lastAt - 1600 });
+    }
   }
 
   /** Aprende cuánto varía la cara de alguien de una vez a otra (con huellas de otra sesión). */
@@ -211,8 +338,8 @@ export class People {
   private addSamples(p: Person, fps: number[][], geos: number[][]) {
     // con 4 decimales basta, y el archivo pesa mucho menos
     const round = (v: number[]) => v.map((x) => Math.round(x * 1e4) / 1e4);
-    p.fps = [...p.fps, ...fps.map(round)].slice(-MAX_SAMPLES);
-    p.geos = [...p.geos, ...geos.map(round)].slice(-MAX_SAMPLES);
+    p.fps = keepVaried([...p.fps, ...fps.map(round)], cosDist);
+    p.geos = keepVaried([...p.geos, ...geos.map(round)], geoDist);
   }
 
   /** Mientras sabe quién eres, guarda de vez en cuando huellas nuevas (con otra luz, otro peinado...). */
@@ -222,7 +349,14 @@ export class People {
     if (!p) return;
     tr.lastSampleAt = t;
     p.lastSeen = t;
-    this.addSamples(p, tr.fps.slice(-1), tr.geos.slice(-1));
+    // solo aprende de huellas que de verdad se parecen más a las suyas que a las de los demás
+    // (si no, con el tiempo la cara de Luis se iría "manchando" con la de Ana)
+    const last = tr.fps.slice(-1);
+    const lastGeo = tr.geos.slice(-1);
+    const mine = scoreOf(p, last, lastGeo);
+    const rival = Math.min(Infinity, ...this.humans.filter((q) => q !== p && q.fps.length).map((q) => scoreOf(q, last, lastGeo)));
+    if (mine > rival * 0.8) return;
+    this.addSamples(p, last, lastGeo);
     this.save();
   }
 
@@ -241,8 +375,13 @@ export class People {
       // si esa cara estaba asignada a otra persona por error, se corrige
       tr.personId = p.id;
       tr.sure = true;
-      tr.decided = true;
+      tr.spoken = true;
+      tr.rejected = tr.rejected.filter((id) => id !== p.id);
       tr.lastSampleAt = this.now();
+      // y si otra cara creía ser esta persona, deja de creerlo
+      for (const o of this.tracks) {
+        if (o !== tr && o.personId === p.id) Object.assign(o, { personId: null, sure: false });
+      }
       this.addSamples(p, tr.fps, tr.geos);
       if (!p.spread && tr.fps.length > 1) {
         // primera vez: una estimación prudente a partir de lo que ha variado durante este rato
@@ -250,6 +389,7 @@ export class People {
         for (let i = 1; i < tr.fps.length; i++) d = Math.max(d, cosDist(tr.fps[i], tr.fps[i - 1]));
         p.spread = d * 3;
       }
+      this.note(`cara ${tr.id}: me confirmas que es ${p.name} (margen ${(p.spread * 2.5).toFixed(3)}, ${p.fps.length} huellas guardadas)`);
     }
     p.lastSeen = this.now();
     this.save();
@@ -260,8 +400,13 @@ export class People {
   reject(trackId: number | null) {
     const tr = this.tracks.find((x) => x.id === trackId);
     if (tr) {
+      if (tr.personId) {
+        tr.rejected.push(tr.personId);
+        this.note(`cara ${tr.id}: me dices que no es ${this.byId(tr.personId)?.name ?? '?'}`);
+      }
       tr.personId = null;
       tr.sure = false;
+      tr.spoken = true;
     }
   }
 

@@ -101,7 +101,7 @@ async function run() {
     const q = log.slice(before).find((e) => /\?$/.test(e.text));
     if (q && (clock < at(13) || /llamas/.test(q.text))) {
       clock += 20_000;
-      const answer = /llamas/.test(q.text) ? 'Alberto' : 'Pues bien, la verdad';
+      const answer = /llamas/.test(q.text) ? 'Luis' : 'Pues bien, la verdad';
       const reply = life.answered(answer);
       log.push({ t: clock, kind: 'tú', text: answer });
       if (reply) log.push({ t: clock, kind: 'dice', text: reply });
@@ -125,7 +125,7 @@ async function run() {
   for (const [h, n] of perHour) if (n > 4) fails.push(`${n} iniciativas a las ${h}h (demasiado pesado)`);
   if (!log.some((e) => /dentista/.test(e.text))) fails.push('no recordó el dentista');
   if (!log.some((e) => /examen/.test(e.text))) fails.push('no preguntó por el examen de ayer');
-  if (memory.name !== 'Alberto') fails.push('no aprendió el nombre');
+  if (memory.name !== 'Luis') fails.push('no aprendió el nombre');
 
   console.log(`\nIniciativas propias: ${own.length}`);
   console.log(fails.length ? `FALLA:\n - ${fails.join('\n - ')}` : 'OK: todo con sentido y respetando las normas.');

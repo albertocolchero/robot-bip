@@ -1,15 +1,16 @@
 // Panel de ajustes de Bip: se abre la primera vez, con tres toques seguidos en la pantalla
 // o diciendo "Bip, ajustes". Los cambios se ven al momento en la cara.
 import { useEffect, useState } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 
 import type { Instinct } from '../brain/instinct';
+import { clockOf, type LogKind } from '../brain/log';
 import { loadPrefs, savePrefs } from '../brain/prefs';
 import type { FaceEngine } from './engine';
 import { COLORS, EFFECTS, EFFECT_INFO, SHAPES, SHAPE_INFO, saveTheme, type ColorName, type ShapeName, type Theme } from './theme';
 
 const MONO = Platform.select({ ios: 'Menlo', default: 'monospace' });
-type Tab = 'color' | 'ojos' | 'efecto' | 'sonido' | 'isla' | 'personas' | 'estado';
+type Tab = 'color' | 'ojos' | 'efecto' | 'sonido' | 'isla' | 'personas' | 'estado' | 'registro';
 const TABS: [Tab, string][] = [
   ['color', 'Color'],
   ['ojos', 'Ojos'],
@@ -18,7 +19,24 @@ const TABS: [Tab, string][] = [
   ['isla', 'Mini Bip'],
   ['personas', 'Personas'],
   ['estado', 'Estado'],
+  ['registro', 'Registro'],
 ];
+
+/** Color de cada tipo de línea del registro. */
+const LOG_COLORS: Record<LogKind, string> = {
+  oye: '#7FD6FF',
+  ignora: '#6F8580',
+  decide: '#FFD36B',
+  dice: '#C9DDD6',
+  mente: '#B79CFF',
+  caras: '#7CF2B0',
+  tiempo: '#7CF2B0',
+  fallo: '#FF5C5C',
+};
+
+function shareLog(instinct: Instinct) {
+  void Share.share({ title: 'Registro de Bip', message: instinct.log.text() });
+}
 
 type Props = {
   engine: FaceEngine;
@@ -75,9 +93,9 @@ export function Settings({ engine, instinct, first, onClose, onPreviewVoice }: P
     return () => liftFace(engine, 0);
   }, [engine]);
 
-  // la pestaña «Estado» se actualiza cada segundo
+  // las pestañas «Estado» y «Registro» se actualizan cada segundo
   useEffect(() => {
-    if (tab !== 'estado') return;
+    if (tab !== 'estado' && tab !== 'registro') return;
     const id = setInterval(() => setVersion((v) => v + 1), 1000);
     return () => clearInterval(id);
   }, [tab]);
@@ -251,6 +269,46 @@ export function Settings({ engine, instinct, first, onClose, onPreviewVoice }: P
           </>
         )}
 
+        {tab === 'registro' && (
+          <>
+            {instinct.log.summary().map((line) => (
+              <Text key={line.slice(0, 16)} style={styles.label}>
+                {line}
+              </Text>
+            ))}
+            <View style={styles.row}>
+              <Pressable onPress={() => shareLog(instinct)} style={[styles.chip, { borderColor: accent }]}>
+                <Text style={[styles.chipText, { color: accent }]}>Compartir registro</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  if (confirming !== 'registro') {
+                    setConfirming('registro');
+                    return;
+                  }
+                  instinct.log.clear();
+                  setConfirming(null);
+                  setVersion((v) => v + 1);
+                }}
+                style={[styles.chip, confirming === 'registro' && { borderColor: '#FF5C5C' }]}
+              >
+                <Text style={[styles.chipText, confirming === 'registro' && { color: '#FF5C5C' }]}>{confirming === 'registro' ? '¿Seguro? Toca otra vez' : 'Borrar'}</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.dim}>
+              Lo que oye, quién se encarga, lo que contesta y cuánto tarda. Se queda en este iPhone ({instinct.log.size} líneas); solo sale si lo
+              compartes. Lleva lo que habéis hablado: échale un vistazo antes de mandarlo.
+            </Text>
+            {instinct.log.latest(80).map((e, i) => (
+              <Text key={`${e.t}-${i}`} style={styles.logLine}>
+                <Text style={styles.dim}>{clockOf(e.t)} </Text>
+                <Text style={{ color: LOG_COLORS[e.k] }}>{e.k.padEnd(6)} </Text>
+                <Text style={styles.logText}>{e.m}</Text>
+              </Text>
+            ))}
+          </>
+        )}
+
         {tab === 'personas' && (
           <>
             {people.length === 0 && <Text style={styles.label}>Aún no conoce a nadie. Ponte delante de Bip: te preguntará cómo te llamas.</Text>}
@@ -330,6 +388,8 @@ const styles = StyleSheet.create({
   knobOn: { transform: [{ translateX: 18 }], backgroundColor: '#041014' },
   label: { color: '#C9DDD6', fontFamily: MONO, fontSize: 12, flexShrink: 1 },
   dim: { color: '#6F8580', fontFamily: MONO, fontSize: 11 },
+  logLine: { fontFamily: MONO, fontSize: 10.5, lineHeight: 15 },
+  logText: { color: '#C9DDD6' },
   card: { alignItems: 'center', paddingVertical: 8, paddingHorizontal: 10, borderRadius: 12, borderWidth: 1, borderColor: '#2A3236', gap: 6 },
   eyes: { flexDirection: 'row', gap: 6, alignItems: 'center', height: 40 },
   cardText: { color: '#9FB8B0', fontFamily: MONO, fontSize: 11 },

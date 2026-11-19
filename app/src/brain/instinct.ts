@@ -12,12 +12,13 @@ import type { EmotionName, FaceEngine } from '../face/engine';
 import { saveTheme, themeCommand } from '../face/theme';
 import { setListenWhileSpeaking, speechSeconds } from '../voice/speak';
 import { dayKey, hhmm, spokenDay } from './dates';
-import { GAME_LIST, Games, type GameName } from './games';
+import { GAME_LIST, Games, asksToPlay, offersToPlay, type GameName } from './games';
 import { Island } from './island';
 import { Life } from './life';
 import { learn, nameFrom, saveMemory, type Memory } from './memory';
 import type { Mind, Situation } from './mind';
-import { geocode, headlines, sayWeather, search, tidy, weather, type Place, type Weather } from './net';
+import { geocode, headlines, sayWeather, search, tidy, weather, weatherQuestion, type Place, type Weather } from './net';
+import { Log } from './log';
 import { People, type Person, type WhoEvent } from './people';
 import { Perception, type PerceptionEvent } from './perception';
 import { loadPrefs } from './prefs';
@@ -48,7 +49,8 @@ const GAZE_X = 24; // cuánto giran los ojos hacia los lados
 const GAZE_Y = 12; // y hacia arriba y abajo
 const FLIP_X = 1; // pon -1 si los ojos miran al lado contrario
 const FLIP_Y = 1;
-const LOOKING_YAW = 0.4; // radianes: menos que esto = te está mirando
+const LOOKING_YAW = 0.75; // radianes (unos 43°): menos que esto = está de cara a Bip (mirando la pantalla vale, no hace falta mirar a la cámara)
+const ATTENTION_MS = 10_000; // si apartas la mirada un momento, sigue contando como que estás con él
 const DARK = -2.0; // brillo por debajo = oscuro
 const BRIGHT = 0.0; // brillo por encima = hay luz
 const DARK_SECONDS = 12;
@@ -134,6 +136,9 @@ export class Instinct {
   readonly games: Games;
   readonly perception: Perception;
   readonly people: People;
+  /** Lo que oye, decide y contesta (Ajustes › Registro), para poder mejorarle. */
+  readonly log = new Log();
+  private lastLoggedError = { text: '', at: 0 };
   readonly timers = new Timers();
   /** El mini Bip de la Isla Dinámica. */
   readonly island: Island;
@@ -150,6 +155,7 @@ export class Instinct {
   private lastGreetAt = 0;
   private looking = false;
   private lookingSince = 0;
+  private lastLookAt = 0;
   private darkSince = 0;
   private brightSince = 0;
   private asleepByDark = false;
@@ -166,6 +172,8 @@ export class Instinct {
   private place: Place | null = readJSON<Place>(PLACE_FILE);
   private forecast: Weather | null = null;
   private forecastAt = 0;
+  /** Le preguntaste el tiempo y aún no sabía dónde vives: en cuanto se lo digas, te lo dice. */
+  private weatherWanted: { when: 'hoy' | 'mañana'; at: number } | null = null;
   private sayRaw: Say;
   /** Acaba de llegar alguien: le saluda en cuanto sepa quién es (o a los 5 segundos, sin nombre). */
   private arrival: { at: number; absent: number; faceAt?: number } | null = null;
@@ -262,6 +270,7 @@ export class Instinct {
     this.buzz = d.buzz;
     this.sayRaw = d.say;
     this.people = new People(d.memory.name);
+    this.people.onNote = (m) => this.log.add('caras', m);
     const prefs = loadPrefs();
     this.island = new Island(d.engine, this.timers, prefs.island);
     this.setBargeIn(prefs.interrupt);
@@ -316,10 +325,16 @@ export class Instinct {
   // ================================================================ hablar
   /** Habla con el volumen que toque (bajito de noche) y apunta que ha hablado. */
   private say: Say = (emo, text, opts) => {
+    this.log.add('dice', text);
     this.life?.touchedTalk();
     if (opts?.subtitle !== false) this.noticeOwnWords(text);
     this.sayRaw(emo, text, { volume: this.life ? this.life.volume() : 1, ...opts });
   };
+
+  /** Apunta en el registro quién se ha encargado de lo que acabas de decir. */
+  private took(what: string) {
+    this.log.add('decide', `→ ${what}`);
+  }
 
   /** Para hablar desde fuera (los toques en la pantalla): así recuerda lo que ha propuesto. */
   speakTo(emo: EmotionName, text: string) {
@@ -332,7 +347,7 @@ export class Instinct {
     const now = performance.now();
     this.lastQuestion = { text, at: now };
     const t = normalize(text);
-    if (!this.games?.playing && /\b(jugamos|jugar|juego|juegos|juguemos|partida|revancha)\b/.test(t)) {
+    if (!this.games?.playing && offersToPlay(t)) {
       const named = GAME_LIST.find((g) => g.re.test(t))?.name ?? null;
       this.offer = { at: now, game: named ?? (/\b(otra|revancha)\b/.test(t) ? this.games.lastGame : null) };
     }
@@ -396,11 +411,11 @@ export class Instinct {
 
   /** ¿Hay alguien mirando a Bip ahora mismo? */
   get attending() {
-    return this.looking && performance.now() - this.lastFaceAt < 2000;
+    return this.seesSomeone && performance.now() - this.lastLookAt < ATTENTION_MS;
   }
 
   get seesSomeone() {
-    return performance.now() - this.lastFaceAt < 2000;
+    return performance.now() - this.lastFaceAt < 4000;
   }
 
   /** Quién le habla: la cara más cercana si la reconoce; si solo conoce a una persona y no hay nadie más, esa. */
@@ -479,6 +494,7 @@ export class Instinct {
       }
       const looking = Math.abs(face.yaw ?? 0) < LOOKING_YAW;
       if (looking && !this.looking) this.lookingSince = now;
+      if (looking) this.lastLookAt = now;
       this.looking = looking;
       const absent = this.lastFaceAt ? now - this.lastFaceAt : Infinity;
       this.lastFaceAt = now;
@@ -495,10 +511,10 @@ export class Instinct {
       const who = [...this.people.feed(faces, e.geo), ...this.people.feedAnimals(e.animals)];
       if (!this.sleeping && who.length) this.onWho(who, now);
     }
-    // ha llegado alguien pero no ha podido saber quién es (lleva 4 segundos y medio delante): saluda igual
+    // ha llegado alguien pero no ha podido saber quién es (lleva 6 segundos y medio delante): saluda igual
     if (face && this.arrival && !this.arrival.faceAt && !this.uiOpen) this.arrival.faceAt = now;
     const a0 = this.arrival;
-    if (a0 && !this.uiOpen && ((a0.faceAt && now - a0.faceAt > 4500) || (!a0.faceAt && now - a0.at > 8000))) {
+    if (a0 && !this.uiOpen && ((a0.faceAt && now - a0.faceAt > 6500) || (!a0.faceAt && now - a0.at > 8000))) {
       this.arrival = null;
       if (!this.sleeping && !this.games.playing && this.life.mayReact()) this.greet(a0.absent, this.speakerName());
     }
@@ -558,6 +574,16 @@ export class Instinct {
 
     // personas que reconoce
     const known = events.filter((e): e is Extract<WhoEvent, { kind: 'conocido' }> => e.kind === 'conocido' && !!e.person.name);
+    // lo ha sabido después de preguntar ("¿cómo te llamas?"): ya no hace falta que contestes
+    for (const e of known) {
+      const a = this.asking;
+      if (e.late && a && a.kind !== 'mascota' && a.track === e.track) {
+        this.asking = null;
+        this.askedWhoAt = -Infinity;
+        this.engine.hop(-0.6);
+        this.answer('contento', `¡Ah, si eres ${e.person.name}! Ya te he reconocido.`);
+      }
+    }
     if (known.length) {
       const names = known.map((e) => e.person.name as string);
       if (this.arrival) {
@@ -566,7 +592,8 @@ export class Instinct {
         this.engine.hop(-0.6);
         this.greet(a.absent, joinNames(names));
       } else {
-        const back = known.filter((e) => e.absentMs > GREET_AFTER_MS).map((e) => e.person.name as string);
+        // los "late" ya estaban delante: no se les saluda otra vez
+        const back = known.filter((e) => !e.late && e.absentMs > GREET_AFTER_MS).map((e) => e.person.name as string);
         if (back.length && now - this.lastGreetAt > 20_000) {
           this.engine.hop(-0.6);
           this.answer('contento', `¡Hola, ${joinNames(back)}!`);
@@ -575,6 +602,8 @@ export class Instinct {
     }
     if (!this.mayAskWho(now)) return;
 
+    // si hay dos caras y la pregunta es por la que no le habla, lo dice así (si no, no sabéis a quién pregunta)
+    const aside = (track: number) => this.people.faceCount() > 1 && track !== this.people.speakerTrack();
     // le suena, pero no está seguro
     const doubt = events.find((e): e is Extract<WhoEvent, { kind: 'duda' }> => e.kind === 'duda' && !!e.person.name);
     if (doubt) {
@@ -582,7 +611,8 @@ export class Instinct {
       this.arrival = null;
       this.askedWhoAt = now;
       this.asking = { kind: 'eres', track: doubt.track, person: doubt.person, other: doubt.other?.name ? doubt.other : undefined, at: now };
-      const q = doubt.other?.name ? `¿Eres ${doubt.person.name} o ${doubt.other.name}?` : `¿Eres ${doubt.person.name}?`;
+      const who = doubt.other?.name ? `${doubt.person.name} o ${doubt.other.name}` : doubt.person.name;
+      const q = aside(doubt.track) ? `¿Y quien está a tu lado es ${who}?` : `¿Eres ${who}?`;
       this.engine.setEmotion('curioso', 2500);
       this.answer('curioso', `${hi}${q}`);
       return;
@@ -595,6 +625,7 @@ export class Instinct {
       this.askedWhoAt = now;
       this.asking = { kind: 'nombre', track: fresh.track, at: now };
       if (first) this.answerLines('contento', ['¡Hola! Soy Bip, tu droide de escritorio.', '¿Cómo te llamas?']);
+      else if (aside(fresh.track)) this.answer('curioso', '¡Hola! A quien está a tu lado no le conozco. ¿Cómo se llama?');
       else this.answer('curioso', '¡Hola! Creo que no nos conocemos. ¿Cómo te llamas?');
     }
   }
@@ -804,6 +835,10 @@ export class Instinct {
       // el dictado del iPhone está fallando: que se vea (y que lo diga, como mucho cada 10 minutos)
       this.hearing.errors++;
       this.hearing.lastError = e.error;
+      if (e.error !== this.lastLoggedError.text || Date.now() - this.lastLoggedError.at > 60_000) {
+        this.lastLoggedError = { text: e.error, at: Date.now() };
+        this.log.add('fallo', `dictado: ${e.error}`);
+      }
       // el caso más típico: el dictado del iPhone está apagado (sin él, iOS no deja convertir la voz en texto)
       const dictationOff = /siri|dictation|dictado/i.test(e.error);
       const fix = 'Ajustes › General › Teclado › Activar Dictado';
@@ -836,6 +871,7 @@ export class Instinct {
     this.utteranceDuringSpeech = false;
     this.hearing.finals++;
     this.hearing.lastText = e.text;
+    this.log.add('oye', `«${e.text}»${speakingNow ? ' (mientras él hablaba)' : ''}`);
     // si escucha mientras pita, el dictado a veces pega sus propios pitidos ("pi", "bip") delante de tu frase
     const text = duringSpeech ? e.text.replace(/^(?:\s*(?:bip|pip|vip|pi+|mm+|ah+)[\s,.!?…]*)+/i, '').trim() : e.text;
     const t = normalize(text);
@@ -843,6 +879,7 @@ export class Instinct {
     if (!t) {
       this.hearing.echoes++;
       this.engine.showHeard(`${e.text}  · (creo que me he oído a mí mismo)`);
+      this.log.add('ignora', 'era su propio eco');
       return;
     }
 
@@ -850,7 +887,7 @@ export class Instinct {
     if (this.ringing && (mentionsName(text) || /\b(vale|para|parar|ya|apaga|apagalo|calla|gracias|ok|basta|silencio|entendido|vale vale)\b/.test(t))) {
       this.engine.showHeard(text);
       this.stopRinging();
-      return;
+      return this.took('apagar el aviso que sonaba');
     }
 
     // le hablas mientras pita: "para", "calla", "espera" le cortan; una frase de verdad, también
@@ -862,14 +899,16 @@ export class Instinct {
         this.engine.showHeard(text);
         this.stopSpeaking();
         this.engine.setEmotion('neutral', 1200);
-        return;
+        return this.took('callarse (le has interrumpido)');
       }
       if (t.split(' ').length >= 2) {
         this.noteBargeIn();
         this.stopSpeaking();
+        this.log.add('decide', '→ se calla para escucharte (le has interrumpido)');
       } else {
         this.hearing.echoes++;
         this.engine.showHeard(`${text}  · (creo que me he oído a mí mismo)`);
+        this.log.add('ignora', 'una palabra suelta mientras hablaba: seguramente su eco');
         return;
       }
     }
@@ -891,6 +930,7 @@ export class Instinct {
       // no le hablan a él (por teléfono o con otra persona): no interrumpir, pero que se vea por qué
       this.engine.showHeard(`${text}  · creo que hablabas con otro (si era para mí, llámame «Bip»)`);
       this.hearing.ignored++;
+      this.log.add('ignora', 'creo que hablabas con otra persona');
       this.life.overheard();
       if (Math.random() < 0.25) this.engine.setEmotion('curioso', 1500);
       return;
@@ -903,25 +943,25 @@ export class Instinct {
     if (!this.closing) this.listenFor(CONVERSATION_MS);
 
     // 0) respuestas a lo que Bip acaba de preguntar: quién eres, cómo se llama tu perro, ¿jugamos?
-    if (this.answerAsking(text, t, now)) return;
-    if (this.answerOffer(text, t, now)) return;
+    if (this.answerAsking(text, t, now)) return this.took('respuesta a su pregunta (quién eres, tu mascota)');
+    if (this.answerOffer(text, t, now)) return this.took('juego (aceptas su propuesta de jugar)');
 
     // 1) juegos
     const wasPlaying = this.games.playing;
     const g = this.games.request(text);
     if (g) {
       this.answer(g.emo, g.text);
-      return;
+      return this.took(wasPlaying ? 'juego (dejarlo)' : 'juego (menú o revancha)');
     }
-    if (!wasPlaying && this.games.playing) return; // acaba de empezar un juego: esa frase era para elegirlo
+    if (!wasPlaying && this.games.playing) return this.took('juego (empieza)'); // esa frase era para elegirlo
     if (this.games.playing) {
-      if (this.games.hear(text)) return;
+      if (this.games.hear(text)) return this.took('juego (jugada)');
     }
     // 2) ajustes
     if (this.onSettings && /\b(ajustes|configuracion|configurar|personaliza|personalizar|personalizate|opciones|preferencias)\b/.test(t)) {
       this.openSettings();
       this.answer('contento', 'Aquí tienes mis ajustes. Toca «Listo» al terminar.');
-      return;
+      return this.took('ajustes');
     }
     // 3) intimidad, silencio, diario, "¿cómo estás?"
     const cmd = this.life.command(text);
@@ -932,12 +972,12 @@ export class Instinct {
         const total = cmd.lines.reduce((a, l) => a + speechSeconds(l, cmd.emo) + 1.4, 0);
         setTimeout(cmd.after, total * 1000);
       }
-      return;
+      return this.took('órdenes (silencio, intimidad, diario, ánimo)');
     }
     // 4) quién es quién ("no soy Luis", "¿quién soy?", "mi perro se llama Toby")
-    if (this.peopleCommand(text, t, now)) return;
+    if (this.peopleCommand(text, t, now)) return this.took('personas (quién soy, no soy...)');
     // 5) temporizadores y avisos
-    if (this.timerCommand(text, t)) return;
+    if (this.timerCommand(text, t)) return this.took('aviso o temporizador');
     // 6) su aspecto ("ponte azul", "efecto holograma")
     const th = themeCommand(text, this.engine.theme);
     if (th) {
@@ -946,19 +986,19 @@ export class Instinct {
       this.engine.hop(-0.8);
       this.engine.burst('sparkle', 6);
       this.answer('feliz', th.text);
-      return;
+      return this.took('aspecto (color, ojos, efecto)');
     }
     // 7) respuestas a sus preguntas (tu nombre, tu ciudad...)
     const ans = this.life.answered(text);
-    if (ans) {
-      this.answer('contento', ans);
-      return;
+    if (ans !== null) {
+      if (ans) this.answer('contento', ans);
+      return this.took('respuesta a su pregunta (nombre, ciudad)');
     }
     // 8) "me llamo Ana": es quien le habla ahora (no siempre la misma persona)
     const nm = nameFrom(text);
     if (nm) {
       this.answer('contento', this.named(nm, this.people.speakerTrack()));
-      return;
+      return this.took('nombre');
     }
     // 9) ¿le piden recordar algo?
     const learned = learn(this.memory, text, new Date());
@@ -967,14 +1007,14 @@ export class Instinct {
       else if (learned.fact) this.life.learnedFact(`me pediste recordar «${learned.fact}»`);
       this.answer('contento', learned.text);
       this.life.noteTalk(text, learned.text);
-      return;
+      return this.took('recordar algo');
     }
     // 10) internet: el tiempo, noticias, "busca..."
     if (this.netIntent(text)) return;
     // 11) órdenes y datos exactos: los resuelven las reglas al momento
     if (reply?.action === 'sleep') {
       this.sleep(reply.text);
-      return;
+      return this.took('dormir');
     }
     if (reply && (reply.fast || reply.action === 'love')) {
       if (reply.action === 'love') {
@@ -983,7 +1023,7 @@ export class Instinct {
       }
       this.answer(reply.action === 'love' ? 'enamorado' : reply.emo, reply.text);
       this.life.noteTalk(text, reply.text);
-      return;
+      return this.took(`reglas (respuesta rápida${reply.action ? `: ${reply.action}` : ''})`);
     }
     // 12) todo lo demás, a la mente (si ya la tiene)
     if (this.mind.ready) {
@@ -991,7 +1031,11 @@ export class Instinct {
         // está pensando otra cosa (por ejemplo, apuntando lo que habéis hablado): te contesta en cuanto acabe
         this.waitingThought = { text, at: now };
         this.engine.setEmotion('pensando', 20_000);
-      } else void this.thinkAbout(text);
+        this.took('mente (estaba pensando otra cosa: en cola)');
+      } else {
+        this.took('mente');
+        void this.thinkAbout(text);
+      }
       return;
     }
     if (reply) {
@@ -999,8 +1043,10 @@ export class Instinct {
       this.life.noteTalk(text, reply.text);
     } else if (this.mind.state === 'descargando') {
       this.answer('pensando', `Aún estoy descargando mi cerebro (${Math.round(this.mind.progress * 100)} %).`);
+      this.took('nadie (la mente aún se está descargando)');
     } else {
       this.answer('curioso', 'Te he oído, pero aún no sé responder a eso.');
+      this.took(`nadie (la mente está ${this.mind.state})`);
     }
   }
 
@@ -1083,7 +1129,7 @@ export class Instinct {
       return true;
     }
     const game = GAME_LIST.find((g) => g.re.test(t))?.name ?? null;
-    if (!isYes(text) && !game && !/\b(jug|jueg|partida)/.test(t)) return false;
+    if (!isYes(text) && !game && !asksToPlay(t)) return false;
     this.offer = null;
     const pickGame = game ?? o.game;
     const r = pickGame ? this.games.start(pickGame) : this.games.menu();
@@ -1275,21 +1321,28 @@ export class Instinct {
   // ================================================================ internet
   private netIntent(text: string): boolean {
     const t = normalize(text);
-    const city = text.match(/\b(?:vivo en|mi ciudad es|estoy viviendo en)\s+([A-Za-zÁÉÍÓÚÜÑáéíóúüñ][A-Za-zÁÉÍÓÚÜÑáéíóúüñ ]{1,30})/i);
+    const city = text.match(
+      /\b(?:vivo en|mi ciudad es|mi pueblo es|estoy viviendo en)\s+([A-Za-zÁÉÍÓÚÜÑáéíóúüñ][A-Za-zÁÉÍÓÚÜÑáéíóúüñ ,()]{1,40})/i,
+    );
     if (city) {
-      void this.setCity(city[1].replace(/[.!?]+$/, '').trim());
+      this.took('el tiempo (apuntar dónde vives)');
+      void this.setCity(city[1].replace(/[.!?]+$/, '').replace(/[,\s]+(?:un pueblo de|en la provincia de|provincia de|en)\s+/i, ', ').trim());
       return true;
     }
-    if (/\b(que tiempo|tiempo hace|tiempo va a hacer|tiempo hara|va a llover|llovera|llueve|temperatura|hace frio|hace calor|paraguas)\b/.test(t)) {
-      void this.tellWeather(/\bmanana\b/.test(t) ? 'mañana' : 'hoy');
+    const wq = weatherQuestion(text);
+    if (wq) {
+      this.took(`el tiempo (${wq.when}${wq.place ? `, en «${wq.place}»` : ', donde vives'})`);
+      void this.tellWeather(wq.when, wq.place);
       return true;
     }
     if (/\b(noticias|titulares|que pasa en el mundo|que ha pasado en el mundo|actualidad)\b/.test(t)) {
+      this.took('noticias');
       void this.tellNews();
       return true;
     }
     const q = text.match(/\b(?:busca(?:me)?|buscar|mira en internet|consulta en internet)\s+(?:en internet\s+)?(?:que es\s+|quien es\s+|quien fue\s+)?(.{2,60})/i);
     if (q) {
+      this.took('buscar en internet');
       void this.searchFor(q[1].replace(/[.!?¿¡]+$/g, '').trim());
       return true;
     }
@@ -1305,9 +1358,18 @@ export class Instinct {
     // empieza a hablar en cuanto tiene las primeras palabras, sin esperar a la frase entera
     const streamer = new StreamSpeech((emo, chunk) => this.answer(emo, chunk), speechSeconds);
     this.streamer = streamer;
+    const t0 = performance.now();
+    let firstAt = 0;
     const t = await this.mind.think(text, this.situation(), asked, (p) => {
+      if (!firstAt && p.text.trim()) firstAt = performance.now();
       if (!this.sleeping && !this.life.privateMode) streamer.feed(p);
     });
+    const secs = (x: number) => ((x - t0) / 1000).toFixed(1);
+    this.log.add(
+      'mente',
+      `primera palabra a los ${firstAt ? secs(firstAt) : '–'} s, entera a los ${secs(performance.now())} s` +
+        `${t ? ` · emoción ${t.emo}${t.accion ? ` · quería jugar (${t.accion})` : ''}` : ' · no ha contestado'}${streamer.isCancelled ? ' · interrumpida' : ''}`,
+    );
     if (this.streamer === streamer) this.streamer = null;
     if (this.sleeping || this.life.privateMode) return;
     // le has interrumpido mientras contestaba: lo que quedaba ya no se dice
@@ -1318,12 +1380,13 @@ export class Instinct {
     }
     // la mente ha decidido jugar. Solo se le hace caso si de verdad se ha hablado de jugar (tú, o él
     // proponiéndolo justo antes): el modelo pequeño a veces lo marca sin venir a cuento.
-    const aboutPlaying = /\b(jug|jueg|partida|revancha)/.test(normalize(text)) || (!!asked && /\b(jug|jueg|partida|revancha)/.test(normalize(asked)));
+    const aboutPlaying = asksToPlay(normalize(text)) || (!!asked && offersToPlay(normalize(asked)) && (isYes(text) || asksToPlay(normalize(text))));
     if (t.accion && aboutPlaying && !this.games.playing) {
       // primero termina lo que estaba diciendo, y luego el juego
       if (!streamer.finish(t.emo, t.text)) this.answer(t.emo, t.text);
       const wait = (speechSeconds(t.text, t.emo) + 0.8) * 1000;
       const accion = t.accion;
+      this.took(`juego (lo propone la mente: ${accion})`);
       setTimeout(() => {
         if (this.games.playing || this.sleeping || this.life.privateMode) return;
         const r = accion === 'juegos' ? this.games.menu() : this.games.start(accion as GameName);
@@ -1338,19 +1401,31 @@ export class Instinct {
 
   private async setCity(city: string) {
     this.engine.setEmotion('pensando', 8000);
+    // si te lo preguntó porque querías saber el tiempo, al apuntarlo te lo dice directamente
+    const wanted = this.weatherWanted && performance.now() - this.weatherWanted.at < 3 * 60_000 ? this.weatherWanted.when : null;
+    this.weatherWanted = null;
     try {
       const p = await geocode(city);
+      this.log.add('tiempo', `buscar «${city}» → ${p ? p.name : 'no encontrado'}`);
       if (!p) {
-        this.answer('confundido', `No encuentro «${city}» en el mapa. ¿Me lo dices de otra forma?`);
+        this.life.askCity(`No encuentro «${city}» en el mapa. ¿Me dices el pueblo y la provincia? Por ejemplo: «Ronda, Málaga».`);
+        if (wanted) this.weatherWanted = { when: wanted, at: performance.now() };
         return;
       }
       this.place = p;
       this.forecast = null;
       writeJSON(PLACE_FILE, p);
       this.life.learnedFact(`vives en ${p.name}`);
+      if (wanted) {
+        const w = await this.refreshForecast();
+        if (w) {
+          this.answerLines('contento', [`¡Apuntado: ${p.name}!`, ...sayWeather(w, wanted)]);
+          return;
+        }
+      }
       this.answer('contento', `¡Apuntado! Estás en ${p.name}. Ya puedo mirarte el tiempo.`);
     } catch {
-      this.answer('triste', 'Ahora no tengo internet para buscar tu ciudad.');
+      this.answer('triste', 'Ahora no tengo internet para buscar tu pueblo.');
     }
   }
 
@@ -1362,16 +1437,34 @@ export class Instinct {
     return this.forecast;
   }
 
-  private async tellWeather(when: 'hoy' | 'mañana') {
-    if (!this.place) {
-      this.life.askCity();
-      return;
-    }
+  private async tellWeather(when: 'hoy' | 'mañana', where: string | null = null) {
     this.engine.setEmotion('pensando', 8000);
     try {
+      // "¿qué tiempo hace en Sevilla?": ese sitio (si no sabe dónde vives, lo apunta como tu sitio)
+      if (where) {
+        const p = await geocode(where);
+        this.log.add('tiempo', `buscar «${where}» → ${p ? p.name : 'no encontrado'}`);
+        if (p) {
+          if (!this.place) {
+            this.place = p;
+            writeJSON(PLACE_FILE, p);
+            this.life.learnedFact(`vives en ${p.name}`);
+          }
+          const w = await weather(p);
+          this.answerLines(w.today.rain >= 50 && when === 'hoy' ? 'triste' : 'contento', sayWeather(w, when));
+          return;
+        }
+        // no encuentra el sitio: si sabe dónde vives, te dice el de allí
+      }
+      if (!this.place) {
+        this.weatherWanted = { when, at: performance.now() };
+        this.life.askCity('¿En qué pueblo o ciudad estás? Dímelo con la provincia, por ejemplo «Ronda, Málaga», y te digo el tiempo.');
+        return;
+      }
       const w = await this.refreshForecast();
       if (w) this.answerLines(w.today.rain >= 50 && when === 'hoy' ? 'triste' : 'contento', sayWeather(w, when));
     } catch {
+      this.log.add('tiempo', 'sin internet');
       this.answer('triste', 'Ahora no tengo internet para mirar el tiempo.');
     }
   }
