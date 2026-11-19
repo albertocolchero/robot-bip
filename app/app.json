@@ -2,7 +2,7 @@
   "expo": {
     "name": "Bip",
     "slug": "bip",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "landscape",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -14,7 +14,13 @@
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "UIStatusBarHidden": true,
-        "UIViewControllerBasedStatusBarAppearance": false
+        "UIViewControllerBasedStatusBarAppearance": false,
+        "NSCameraUsageDescription": "Bip usa la cámara frontal para verte y seguirte con la mirada. Las imágenes no salen del iPhone.",
+        "NSMicrophoneUsageDescription": "Bip usa el micrófono para oír lo que le dices. El sonido no sale del iPhone.",
+        "NSSpeechRecognitionUsageDescription": "Bip convierte tu voz en texto dentro del iPhone para entenderte."
+      },
+      "runtimeVersion": {
+        "policy": "appVersion"
       }
     },
     "android": {
@@ -24,25 +30,17 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false,
-      "permissions": [
-        "android.permission.RECORD_AUDIO",
-        "android.permission.MODIFY_AUDIO_SETTINGS",
-        "android.permission.FOREGROUND_SERVICE",
-        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
-      ]
+      "predictiveBackGestureEnabled": false
     },
     "web": {
       "favicon": "./assets/favicon.png",
       "backgroundColor": "#000000"
     },
+    "updates": {
+      "checkAutomatically": "ON_ERROR_RECOVERY",
+      "url": "https://u.expo.dev/80565dd7-4b85-4226-89fe-ea46ec1143fe"
+    },
     "plugins": [
-      [
-        "expo-audio",
-        {
-          "microphonePermission": false
-        }
-      ],
       [
         "expo-splash-screen",
         {
@@ -51,7 +49,13 @@
           "imageWidth": 160
         }
       ],
-      "expo-asset"
+      "expo-asset",
+      [
+        "expo-sensors",
+        {
+          "motionPermission": "Bip nota cuándo lo mueves o lo levantas."
+        }
+      ]
     ],
     "extra": {
       "eas": {

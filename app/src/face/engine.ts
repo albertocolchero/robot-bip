@@ -66,6 +66,31 @@ export class FaceEngine {
   subUntil = 0;
   speech: Speech | null = null;
 
+  /** Si hay alguien delante, los ojos miran ahí en vez de vagar. */
+  private gaze: [number, number] | null = null;
+  /** Lucecita de "te estoy escuchando". */
+  listeningUntil = 0;
+  /** Lo último que ha oído (se muestra arriba, pequeño). */
+  heard = '';
+  heardUntil = 0;
+
+  setGaze(x: number, y: number) {
+    this.gaze = [x, y];
+  }
+
+  clearGaze() {
+    this.gaze = null;
+  }
+
+  markListening() {
+    this.listeningUntil = performance.now() + 700;
+  }
+
+  showHeard(text: string) {
+    this.heard = text;
+    this.heardUntil = performance.now() + 3500;
+  }
+
   /** Cambia de emoción. Si holdMs > 0, vuelve a "neutral" pasado ese tiempo. */
   setEmotion(e: EmotionName, holdMs = 0) {
     this.emotion = e;
@@ -117,12 +142,16 @@ export class FaceEngine {
       }
     }
 
-    if (now > this.nextLook) {
+    let follow = 0.08;
+    if (this.gaze) {
+      this.lookT = [this.gaze[0], this.gaze[1]];
+      follow = 0.18;
+    } else if (now > this.nextLook) {
       this.lookT = calm ? [0, 0] : [(Math.random() * 2 - 1) * 9, (Math.random() * 2 - 1) * 5];
       this.nextLook = now + 1200 + Math.random() * 2800;
     }
-    this.look[0] += (this.lookT[0] - this.look[0]) * 0.08;
-    this.look[1] += (this.lookT[1] - this.look[1]) * 0.08;
+    this.look[0] += (this.lookT[0] - this.look[0]) * follow;
+    this.look[1] += (this.lookT[1] - this.look[1]) * follow;
 
     if (this.speech && now > this.speech.end + 50) this.speech = null;
   }

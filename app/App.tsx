@@ -1,60 +1,209 @@
-// Bip · fase 1: la cara parpadea, mira a su alrededor y pita cuando la tocas.
-//  - Toque corto: dice algo.
-//  - Toque largo (casi un segundo): se duerme o se despierta.
+// Bip · fases 1, 2 y 3
+//  - Cara: parpadea, mira a su alrededor y pita.
+//  - Ojos: te ve con la cámara frontal, te sigue con la mirada y te saluda.
+//  - Cuerpo: se asusta si lo mueves, ronronea con caricias, se duerme a oscuras
+//    y comenta cuando lo enchufas o lo desenchufas.
+//  - Oído: entiende frases sencillas en español, sin internet.
+// Toque corto: dice algo. Toque largo: se duerme o se despierta. Deslizar: caricia.
 import { StatusBar } from 'expo-status-bar';
+import * as Battery from 'expo-battery';
 import * as Haptics from 'expo-haptics';
 import { useKeepAwake } from 'expo-keep-awake';
+import { DeviceMotion } from 'expo-sensors';
+import * as Updates from 'expo-updates';
 import { useEffect, useMemo, useRef } from 'react';
-import { Platform, Pressable, StyleSheet } from 'react-native';
+import { AppState, PanResponder, Platform, Pressable, StyleSheet, View } from 'react-native';
 
+import BipSenses, { type HearingStart } from './modules/bip-senses';
+import { Instinct, type Buzz } from './src/brain/instinct';
 import { Face } from './src/face/Face';
 import { FaceEngine, type EmotionName } from './src/face/engine';
-import { initAudio } from './src/voice/player';
 import { speak } from './src/voice/speak';
 
 const TAP_LINES: [EmotionName, string][] = [
   ['contento', '¡Hola! Soy Bip.'],
   ['sorprendido', '¡Uy! ¿Me has tocado?'],
-  ['contento', '¡Qué gustito!'],
-  ['curioso', '¿Jugamos a algo?'],
+  ['curioso', 'Dime «hola, Bip».'],
   ['contento', '¡Bip bip!'],
-  ['pensando', 'Pronto podré verte y oírte.'],
+  ['pensando', 'Pregúntame la hora.'],
+  ['curioso', '¿Jugamos a algo?'],
 ];
 
 const IDLE: EmotionName[] = ['curioso', 'pensando', 'contento', 'neutral'];
 
-function buzz(style: Haptics.ImpactFeedbackStyle) {
+const buzz: Buzz = (kind) => {
   if (Platform.OS === 'web') return;
-  Haptics.impactAsync(style).catch(() => undefined);
+  const done =
+    kind === 'tick'
+      ? Haptics.selectionAsync()
+      : Haptics.impactAsync(kind === 'soft' ? Haptics.ImpactFeedbackStyle.Light : Haptics.ImpactFeedbackStyle.Heavy);
+  done.catch(() => undefined);
+};
+
+/** Si hay una versión nueva de la app publicada por internet, la descarga y se reinicia. */
+async function updateIfAvailable() {
+  if (__DEV__ || Platform.OS === 'web' || !Updates.isEnabled) return;
+  try {
+    const check = await Updates.checkForUpdateAsync();
+    if (!check.isAvailable) return;
+    await Updates.fetchUpdateAsync();
+    await Updates.reloadAsync();
+  } catch {
+    // sin internet o sin novedades: seguimos con la versión que hay
+  }
+}
+
+function hearingProblem(r: HearingStart): string | null {
+  if (r.ok) return null;
+  switch (r.reason) {
+    case 'permiso-microfono':
+    case 'permiso-voz':
+      return 'No puedo oírte: dame permiso en Ajustes › Bip.';
+    case 'sin-modelo-local':
+      return 'Para oírte sin internet necesito el dictado en español.';
+    case 'idioma':
+      return 'Aún no sé oír en español en este iPhone.';
+    default:
+      return 'Mis oídos no funcionan ahora mismo.';
+  }
 }
 
 export default function App() {
   useKeepAwake(); // la pantalla no se apaga mientras Bip está abierto
   const engine = useMemo(() => new FaceEngine(), []);
+  const instinct = useMemo(
+    () => new Instinct(engine, (emo, text, opts) => void speak(engine, text, emo, opts), buzz),
+    [engine],
+  );
   const line = useRef(0);
 
+  // --------------------------------------------------- sentidos: ojos y oído
   useEffect(() => {
-    initAudio();
-    const hello = setTimeout(() => speak(engine, '¡Hola! Soy Bip.', 'contento'), 1500);
-    // de vez en cuando cambia de gesto él solo
+    let cancelled = false;
+    let running = false;
+    let wentAway = false;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const later = (ms: number, fn: () => void) => timers.push(setTimeout(fn, ms));
+
+    const seeSub = BipSenses.addListener('onSee', (e) => instinct.onSee(e));
+    const hearSub = BipSenses.addListener('onHear', (e) => instinct.onHear(e));
+
+    const startSenses = async () => {
+      if (running) return null;
+      running = true;
+      const perms = await BipSenses.requestPermissions().catch(() => ({ camera: false, microphone: false, speech: false }));
+      if (cancelled) return null;
+      if (perms.camera) BipSenses.startSeeing();
+      let hearing: HearingStart;
+      if (!perms.microphone) hearing = { ok: false, reason: 'permiso-microfono' };
+      else if (!perms.speech) hearing = { ok: false, reason: 'permiso-voz' };
+      else hearing = await BipSenses.startHearing('es-ES').catch(() => ({ ok: false, reason: 'error' }));
+      return { camera: perms.camera, hearing };
+    };
+
+    const stopSenses = () => {
+      running = false;
+      BipSenses.stopSeeing();
+      BipSenses.stopHearing();
+    };
+
+    (async () => {
+      updateIfAvailable();
+      const r = await startSenses();
+      if (!r || cancelled) return;
+      later(1200, () => {
+        instinct.markGreeted();
+        speak(engine, '¡Hola! Soy Bip.', 'contento');
+      });
+      if (!r.camera) later(4200, () => speak(engine, 'No puedo verte: dame permiso de cámara en Ajustes.', 'triste'));
+      const problem = hearingProblem(r.hearing);
+      if (problem) later(r.camera ? 4200 : 8200, () => speak(engine, problem, 'triste'));
+    })();
+
+    const appSub = AppState.addEventListener('change', (state) => {
+      if (state === 'background') {
+        wentAway = true;
+        stopSenses();
+      } else if (state === 'active' && wentAway) {
+        wentAway = false;
+        updateIfAvailable();
+        startSenses();
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      timers.forEach(clearTimeout);
+      seeSub.remove();
+      hearSub.remove();
+      appSub.remove();
+      stopSenses();
+    };
+  }, [engine, instinct]);
+
+  // --------------------------------------------------- cuerpo: movimiento y batería
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    DeviceMotion.setUpdateInterval(100);
+    const motionSub = DeviceMotion.addListener((m) => {
+      const a = m.acceleration;
+      if (a) instinct.onMotion(Math.hypot(a.x, a.y, a.z));
+    });
+    Battery.getBatteryStateAsync()
+      .then((s) => instinct.onBattery(s))
+      .catch(() => undefined);
+    const batterySub = Battery.addBatteryStateListener(({ batteryState }) => instinct.onBattery(batteryState));
+    return () => {
+      motionSub.remove();
+      batterySub.remove();
+    };
+  }, [instinct]);
+
+  // --------------------------------------------------- de vez en cuando cambia de gesto él solo
+  useEffect(() => {
     let idle: ReturnType<typeof setTimeout>;
     const tick = () => {
-      if (!engine.busy && engine.emotion !== 'sueno') {
+      if (!engine.busy && !instinct.sleeping) {
         engine.setEmotion(IDLE[Math.floor(Math.random() * IDLE.length)], 2500);
       }
       idle = setTimeout(tick, 8000 + Math.random() * 9000);
     };
     idle = setTimeout(tick, 9000);
-    return () => {
-      clearTimeout(hello);
-      clearTimeout(idle);
-    };
-  }, [engine]);
+    return () => clearTimeout(idle);
+  }, [engine, instinct]);
+
+  // --------------------------------------------------- caricias (deslizar el dedo)
+  const pan = useMemo(() => {
+    let lastX = 0;
+    let lastY = 0;
+    let travelled = 0;
+    return PanResponder.create({
+      onMoveShouldSetPanResponderCapture: (_e, g) => Math.abs(g.dx) + Math.abs(g.dy) > 14,
+      onPanResponderGrant: (_e, g) => {
+        lastX = g.moveX || g.x0;
+        lastY = g.moveY || g.y0;
+        travelled = 0;
+        instinct.touched();
+      },
+      onPanResponderMove: (_e, g) => {
+        instinct.touched();
+        travelled += Math.hypot(g.moveX - lastX, g.moveY - lastY);
+        lastX = g.moveX;
+        lastY = g.moveY;
+        while (travelled > 60) {
+          travelled -= 60;
+          instinct.onCaress();
+        }
+      },
+      onPanResponderRelease: () => instinct.endCaress(),
+      onPanResponderTerminate: () => instinct.endCaress(),
+    });
+  }, [instinct]);
 
   const onPress = () => {
-    buzz(Haptics.ImpactFeedbackStyle.Light);
-    if (engine.emotion === 'sueno') {
-      speak(engine, '¿Mmm? ¡Ah, hola!', 'sorprendido');
+    buzz('soft');
+    if (instinct.sleeping) {
+      instinct.wake('¿Mmm? ¡Ah, hola!');
       return;
     }
     const [emo, text] = TAP_LINES[line.current++ % TAP_LINES.length];
@@ -62,16 +211,24 @@ export default function App() {
   };
 
   const onLongPress = () => {
-    buzz(Haptics.ImpactFeedbackStyle.Medium);
-    if (engine.emotion === 'sueno') speak(engine, '¡Ya estoy despierto!', 'contento');
-    else speak(engine, 'Buenas noches…', 'sueno');
+    buzz('strong');
+    if (instinct.sleeping) instinct.wake();
+    else instinct.sleep();
   };
 
   return (
-    <Pressable style={styles.root} onPress={onPress} onLongPress={onLongPress} delayLongPress={800}>
+    <View style={styles.root} {...pan.panHandlers}>
       <StatusBar hidden />
-      <Face engine={engine} />
-    </Pressable>
+      <Pressable
+        style={StyleSheet.absoluteFill}
+        onPressIn={() => instinct.touched()}
+        onPress={onPress}
+        onLongPress={onLongPress}
+        delayLongPress={800}
+      >
+        <Face engine={engine} />
+      </Pressable>
+    </View>
   );
 }
 

@@ -1,24 +1,28 @@
-// Reproduce un WAV en el iPhone: lo guarda en la caché y lo toca con expo-audio.
-// (En el navegador se usa player.web.ts.)
-import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from 'expo-audio';
-import { File, Paths } from 'expo-file-system';
+// Reproduce un WAV a través del módulo de sentidos de Bip (en el iPhone usa el altavoz
+// configurado para hablar y escuchar a la vez; en el navegador, el reproductor normal).
+import BipSenses from '../../modules/bip-senses';
 
-let player: AudioPlayer | null = null;
-let ready: Promise<void> | null = null;
-let n = 0;
+const CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
-/** Que suene aunque el interruptor de silencio del iPhone esté puesto. */
-export function initAudio() {
-  ready ??= setAudioModeAsync({ playsInSilentMode: true }).catch(() => undefined);
-  return ready;
+export function toBase64(bytes: Uint8Array): string {
+  const parts: string[] = [];
+  let i = 0;
+  for (; i + 2 < bytes.length; i += 3) {
+    const n = (bytes[i] << 16) | (bytes[i + 1] << 8) | bytes[i + 2];
+    parts.push(CHARS[(n >> 18) & 63] + CHARS[(n >> 12) & 63] + CHARS[(n >> 6) & 63] + CHARS[n & 63]);
+  }
+  const rest = bytes.length - i;
+  if (rest === 1) {
+    const n = bytes[i] << 16;
+    parts.push(CHARS[(n >> 18) & 63] + CHARS[(n >> 12) & 63] + '==');
+  } else if (rest === 2) {
+    const n = (bytes[i] << 16) | (bytes[i + 1] << 8);
+    parts.push(CHARS[(n >> 18) & 63] + CHARS[(n >> 12) & 63] + CHARS[(n >> 6) & 63] + '=');
+  }
+  return parts.join('');
 }
 
-export async function playWav(bytes: Uint8Array) {
-  await initAudio();
-  const file = new File(Paths.cache, `bip-voz-${n++ % 4}.wav`);
-  file.create({ overwrite: true });
-  await file.write(bytes);
-  if (!player) player = createAudioPlayer({ uri: file.uri });
-  else player.replace({ uri: file.uri });
-  player.play();
+/** Devuelve la duración en segundos (o -1 si no ha sonado). */
+export function playWav(bytes: Uint8Array): Promise<number> {
+  return BipSenses.playWav(toBase64(bytes));
 }

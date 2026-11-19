@@ -164,9 +164,30 @@ export function Face({ engine }: { engine: FaceEngine }) {
     );
   }
 
+  // lucecita de "te escucho" y lo último que ha oído (arriba, pequeño)
+  if (now < engine.listeningUntil) {
+    const o = 0.5 + 0.5 * Math.abs(Math.sin(now / 160));
+    pieces.push(
+      <View key="ear" style={[styles.dot, styles.earDot, { opacity: o, left: (MX - 4) * s, top: 14 * s, width: 8 * s, height: 8 * s, borderRadius: 4 * s }]} />,
+    );
+  }
+  let heard: React.ReactNode = null;
+  if (engine.heard && now < engine.heardUntil) {
+    const fade = Math.min(1, (engine.heardUntil - now) / 600) * 0.6;
+    heard = (
+      <Text
+        style={[styles.heard, { opacity: fade, fontSize: 10 * s, lineHeight: 12 * s, top: 26 * s, left: (MX - 200) * s, width: 400 * s }]}
+        numberOfLines={1}
+      >
+        «{engine.heard}»
+      </Text>
+    );
+  }
+
   return (
     <View style={styles.root} pointerEvents="none">
       {pieces}
+      {heard}
       {subtitle}
     </View>
   );
@@ -187,4 +208,6 @@ const styles = StyleSheet.create({
   bar: { position: 'absolute', backgroundColor: GLOW, opacity: 0.85 },
   z: { position: 'absolute', color: GLOW, fontWeight: '600' },
   sub: { position: 'absolute', color: '#D8F7EE', textAlign: 'center', fontFamily: MONO },
+  heard: { position: 'absolute', color: '#9FB8B0', textAlign: 'center', fontFamily: MONO },
+  earDot: { shadowColor: GLOW, shadowOpacity: 0.9, shadowRadius: 6, shadowOffset: { width: 0, height: 0 } },
 });
