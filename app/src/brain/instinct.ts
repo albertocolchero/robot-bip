@@ -193,6 +193,7 @@ export class Instinct {
   private bargeIns: number[] = [];
   private bargeInOffUntil = 0;
   private utteranceAt = 0;
+  private lastPartialAt = 0;
   private utteranceDuringSpeech = false;
 
   /** Corta lo que esté diciendo (le has interrumpido). */
@@ -819,20 +820,28 @@ export class Instinct {
     if (!e.final) {
       this.hearing.partials++;
       // ¿empezaste a hablar mientras Bip pitaba? (puede ser que le interrumpas... o que se oiga a sí mismo)
-      if (!this.utteranceAt) {
+      if (!this.utteranceAt || now - this.lastPartialAt > 3000) {
         this.utteranceAt = now;
         this.utteranceDuringSpeech = this.engine.speech !== null;
       }
+      this.lastPartialAt = now;
       return;
     }
-    const duringSpeech = this.utteranceDuringSpeech || this.engine.speech !== null;
+    const speakingNow = this.engine.speech !== null;
+    const duringSpeech = this.bargeIn && (speakingNow || this.utteranceDuringSpeech);
     this.utteranceAt = 0;
     this.utteranceDuringSpeech = false;
     this.hearing.finals++;
     this.hearing.lastText = e.text;
-    const text = e.text;
+    // si escucha mientras pita, el dictado a veces pega sus propios pitidos ("pi", "bip") delante de tu frase
+    const text = duringSpeech ? e.text.replace(/^(?:\s*(?:bip|pip|vip|pi+|mm+|ah+)[\s,.!?…]*)+/i, '').trim() : e.text;
     const t = normalize(text);
     if (this.life.privateMode) return;
+    if (!t) {
+      this.hearing.echoes++;
+      this.engine.showHeard(`${e.text}  · (creo que me he oído a mí mismo)`);
+      return;
+    }
 
     // un temporizador sonando: "vale", "para", "ya" lo apagan
     if (this.ringing && (mentionsName(text) || /\b(vale|para|parar|ya|apaga|apagalo|calla|gracias|ok|basta|silencio|entendido|vale vale)\b/.test(t))) {
@@ -842,22 +851,22 @@ export class Instinct {
     }
 
     // le hablas mientras pita: "para", "calla", "espera" le cortan; una frase de verdad, también
-    // (y luego la contesta). Si solo son ruiditos, seguramente se está oyendo a sí mismo: no hace caso.
-    if (duringSpeech && this.bargeIn) {
-      const stop = /^(?:(?:oye|eh|bip)\s+)?(para|parate|calla|callate|espera|basta|stop|silencio|ya vale|vale vale|vale ya|un momento)\b/.test(t);
-      const words = t.split(' ').filter(Boolean);
-      const real = words.filter((w) => w.length >= 3 && !/^(bip|pip|vip|bipbip|pii+)$/.test(w));
+    // (y luego la contesta). Una sola palabra suelta mientras pita suele ser su propio eco: no hace caso,
+    // pero lo enseña en pantalla para que sepas qué ha pasado.
+    if (duringSpeech && speakingNow) {
+      const stop = /^(?:(?:oye|eh)\s+)?(para|parate|calla|callate|espera|basta|stop|silencio|ya vale|vale vale|vale ya|un momento)\b/.test(t);
       if (stop) {
         this.engine.showHeard(text);
         this.stopSpeaking();
         this.engine.setEmotion('neutral', 1200);
         return;
       }
-      if (words.length >= 3 && real.length >= 2) {
+      if (t.split(' ').length >= 2) {
         this.noteBargeIn();
         this.stopSpeaking();
       } else {
         this.hearing.echoes++;
+        this.engine.showHeard(`${text}  · (creo que me he oído a mí mismo)`);
         return;
       }
     }

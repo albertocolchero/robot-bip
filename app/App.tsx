@@ -14,7 +14,7 @@ import { useKeepAwake } from 'expo-keep-awake';
 import { DeviceMotion } from 'expo-sensors';
 import * as Updates from 'expo-updates';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AppState, Dimensions, PanResponder, Platform, Pressable, StyleSheet, View, type GestureResponderEvent } from 'react-native';
+import { AppState, Dimensions, PanResponder, Platform, Pressable, StyleSheet, Text, View, type GestureResponderEvent } from 'react-native';
 
 import BipSenses, { type HearingStart } from './modules/bip-senses';
 import { Instinct, type Buzz } from './src/brain/instinct';
@@ -132,6 +132,8 @@ export default function App() {
   instinct.onSettings = openSettings;
   const taps = useRef<number[]>([]);
   const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [gear, setGear] = useState(false);
+  const gearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const line = useRef(0);
   if (Platform.OS === 'web') (globalThis as unknown as { bip: object }).bip = { engine, mind, instinct };
 
@@ -293,9 +295,13 @@ export default function App() {
       instinct.wake('¿Mmm? ¡Ah, hola!');
       return;
     }
+    // tras un toque, durante unos segundos sale el botón de ajustes en una esquina
+    setGear(true);
+    if (gearTimer.current) clearTimeout(gearTimer.current);
+    gearTimer.current = setTimeout(() => setGear(false), 5000);
     // tres toques seguidos: ajustes. Si no, al poquito dice una de sus frases
     const now = Date.now();
-    taps.current = [...taps.current.filter((t) => now - t < 900), now];
+    taps.current = [...taps.current.filter((t) => now - t < 1500), now];
     if (tapTimer.current) clearTimeout(tapTimer.current);
     if (taps.current.length >= 3) {
       taps.current = [];
@@ -331,6 +337,19 @@ export default function App() {
       >
         <Face engine={engine} />
       </Pressable>
+      {gear && !settingsOpen && (
+        <Pressable
+          style={styles.gear}
+          hitSlop={12}
+          onPress={() => {
+            setGear(false);
+            if (tapTimer.current) clearTimeout(tapTimer.current);
+            instinct.openSettings();
+          }}
+        >
+          <Text style={styles.gearText}>⚙ Ajustes</Text>
+        </Pressable>
+      )}
       {settingsOpen && (
         <Settings
           engine={engine}
@@ -346,4 +365,16 @@ export default function App() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#000' },
+  gear: {
+    position: 'absolute',
+    right: 18,
+    bottom: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#2A3236',
+    backgroundColor: 'rgba(10,16,18,0.85)',
+  },
+  gearText: { color: '#C9DDD6', fontSize: 13 },
 });

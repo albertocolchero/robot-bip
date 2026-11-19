@@ -5,7 +5,7 @@ import { playWav } from './player';
 
 let resumeTimer: ReturnType<typeof setTimeout> | null = null;
 /** true = sigue escuchando mientras pita (para que puedas interrumpirle). */
-let listenWhileSpeaking = true;
+let listenWhileSpeaking = false;
 
 export function setListenWhileSpeaking(on: boolean) {
   listenWhileSpeaking = on;

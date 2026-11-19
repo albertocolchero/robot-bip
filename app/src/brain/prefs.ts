@@ -18,7 +18,8 @@ export function loadPrefs(): Prefs {
   return {
     volume: Math.max(0.2, Math.min(1, v)),
     island: typeof p?.island === 'boolean' ? p.island : true,
-    interrupt: typeof p?.interrupt === 'boolean' ? p.interrupt : true,
+    // apagado de entrada: escuchar mientras pita puede hacer que se oiga a sí mismo (se activa en Ajustes)
+    interrupt: typeof p?.interrupt === 'boolean' ? p.interrupt : false,
   };
 }
 
