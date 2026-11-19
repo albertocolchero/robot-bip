@@ -19,7 +19,8 @@ import { learn, nameFrom, saveMemory, type Memory } from './memory';
 import type { Mind, Situation } from './mind';
 import { geocode, headlines, sayWeather, search, tidy, weather, weatherQuestion, type Place, type Weather } from './net';
 import { Home, SPOTIFY_APP, YOUTUBE_APP, cleanUrl, loadHome, looksLikeHome, saveHome, type HomeConfig, type Kit } from './home';
-import { Log } from './log';
+import { markBusy, takeLastBusy, takeLastCrash } from './crash';
+import { clockOf, Log } from './log';
 import { People, type Person, type WhoEvent } from './people';
 import { Perception, type PerceptionEvent } from './perception';
 import { loadPrefs, savePrefs, type Ear } from './prefs';
@@ -292,7 +293,7 @@ export class Instinct {
     const homeCfg = loadHome();
     if (homeCfg) this.useHome(homeCfg);
     const prefs = loadPrefs();
-    this.prepareEar(prefs.ear);
+    this.prepareEar(this.checkLastExit(prefs.ear));
     this.island = new Island(d.engine, this.timers, prefs.island);
     this.setBargeIn(prefs.interrupt);
 
@@ -1042,7 +1043,9 @@ export class Instinct {
     // 5) temporizadores y avisos
     if (this.timerCommand(text, t)) return this.took('aviso o temporizador');
     // 6) su aspecto ("ponte azul", "efecto holograma")
-    const th = themeCommand(text, this.engine.theme);
+    // («sorpréndeme» a secas: con la casa conectada es una sorpresa de la casa; sin ella, un aspecto nuevo)
+    const houseSurprise = !!this.home && /^(?:(?:bip|oye|venga)\s+)?(?:sorprendeme|sorprendenos)$/.test(t);
+    const th = houseSurprise ? null : themeCommand(text, this.engine.theme);
     if (th) {
       this.engine.theme = th.theme;
       saveTheme(th.theme);
@@ -1399,6 +1402,32 @@ export class Instinct {
     }
   }
 
+  // ================================================================ si se cerró de golpe
+  /** Mira si la última vez se cerró de golpe y por qué; lo apunta en el registro y lo enseña en pantalla.
+   *  Si fue con Whisper escribiendo una frase, vuelve al oído de Apple. Devuelve el oído que usar. */
+  private checkLastExit(ear: Ear): Ear {
+    const crash = takeLastCrash();
+    const busy = takeLastBusy();
+    const notes: string[] = [];
+    if (crash) {
+      this.log.add('fallo', `la última vez se cerró por un error (${clockOf(crash.at)}): ${crash.msg}`);
+      if (crash.stack) this.log.add('fallo', `dónde: ${crash.stack.split('\n').slice(0, 4).join(' | ')}`);
+      notes.push(`La última vez me cerré por un error: ${crash.msg.slice(0, 90)}`);
+    }
+    if (busy && Date.now() - busy.at < 24 * 3600_000) {
+      const what = busy.what === 'whisper' ? 'Whisper escribía una frase' : busy.what === 'whisper-carga' ? 'cargaba Whisper' : busy.what === 'mente' ? 'la mente pensaba' : busy.what;
+      this.log.add('fallo', `la última vez se cerró de golpe mientras ${what} (${clockOf(busy.at)})`);
+      if (busy.what.startsWith('whisper') && ear === 'whisper') {
+        ear = 'apple-nuevo';
+        savePrefs({ ear });
+        this.log.add('oye', 'vuelve al oído nuevo de Apple por si Whisper era el problema');
+        notes.push('La última vez me cerré de golpe con el oído Whisper. He vuelto al oído de Apple.');
+      }
+    }
+    if (notes.length) setTimeout(() => this.engine.showNotice(notes.join(' '), 20_000), 4000);
+    return ear;
+  }
+
   // ================================================================ el oído: cuál usar
   /** El oído que tiene puesto el iPhone ahora (con Whisper elegido, el de Apple hasta que Whisper esté listo). */
   private nativeEar: Ear = 'apple-nuevo';
@@ -1466,7 +1495,9 @@ export class Instinct {
   }
 
   private async loadWhisper(path: string, announce: boolean) {
+    markBusy('whisper-carga');
     const ok = await this.whisper.load(path);
+    markBusy(null);
     this.log.add(ok ? 'oye' : 'fallo', ok ? 'Whisper cargado' : `Whisper no carga: ${this.whisper.error}`);
     if (!ok) {
       // sin Whisper, que siga oyendo con el de Apple
@@ -1496,7 +1527,8 @@ export class Instinct {
     const t0 = performance.now();
     this.engine.markListening();
     try {
-      const text = await this.whisper.transcribe(path);
+      markBusy('whisper');
+      const text = await this.whisper.transcribe(path).finally(() => markBusy(null));
       const took = ((performance.now() - t0) / 1000).toFixed(1);
       if (!text) {
         this.utteranceAt = 0;
@@ -1893,10 +1925,11 @@ export class Instinct {
     this.streamer = streamer;
     const t0 = performance.now();
     let firstAt = 0;
+    markBusy('mente');
     const t = await this.mind.think(text, this.situation(), asked, (p) => {
       if (!firstAt && p.text.trim()) firstAt = performance.now();
       if (!this.sleeping && !this.life.privateMode) streamer.feed(p);
-    });
+    }).finally(() => markBusy(null));
     const secs = (x: number) => ((x - t0) / 1000).toFixed(1);
     this.log.add(
       'mente',

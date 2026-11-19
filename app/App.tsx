@@ -21,6 +21,7 @@ import { Instinct, type Buzz } from './src/brain/instinct';
 import { loadMemory } from './src/brain/memory';
 import { Mind } from './src/brain/mind';
 import { setStorage } from './src/brain/store';
+import { installCrashCatcher } from './src/brain/crash';
 import { Face } from './src/face/Face';
 import { FaceEngine, type EmotionName } from './src/face/engine';
 import { loadPrefs } from './src/brain/prefs';
@@ -32,6 +33,8 @@ import { speak } from './src/voice/speak';
 
 // los recuerdos de Bip se guardan dentro del iPhone
 setStorage(BipSenses);
+// si algo falla de golpe, se apunta antes de cerrarse (Bip lo cuenta en Ajustes › Registro al volver)
+installCrashCatcher();
 
 const TAP_LINES: [EmotionName, string][] = [
   ['contento', '¡Hola! Soy Bip.'],
