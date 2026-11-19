@@ -1,4 +1,4 @@
-// Bip · fases 1 a 5
+// Bip · fases 1 a 5 (y 1.4: reconoce a cada uno, temporizadores, panel de ajustes)
 //  - Cara: ojos con párpados de verdad, 18 emociones, temas y efectos (Skia + shaders).
 //  - Ojos: te ve con la cámara frontal, te sigue con la mirada, lee tu expresión (MediaPipe)
 //    y tus gestos con la mano.
@@ -6,14 +6,14 @@
 //  - Oído: entiende frases en español sin internet; nota palmadas y música.
 //  - Mente: un modelo de lenguaje dentro del iPhone; busca en internet si le falta un dato.
 //  - Vida propia: ánimo, diario, recuerdos, iniciativa, normas de respeto y juegos.
-// Toque corto: dice algo (o juega). Toque largo: se duerme o se despierta. Deslizar: caricia.
+// Toque corto: dice algo (o juega). Tres toques: ajustes. Toque largo: se duerme o se despierta. Deslizar: caricia.
 import { StatusBar } from 'expo-status-bar';
 import * as Battery from 'expo-battery';
 import * as Haptics from 'expo-haptics';
 import { useKeepAwake } from 'expo-keep-awake';
 import { DeviceMotion } from 'expo-sensors';
 import * as Updates from 'expo-updates';
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, Dimensions, PanResponder, Platform, Pressable, StyleSheet, View, type GestureResponderEvent } from 'react-native';
 
 import BipSenses, { type HearingStart } from './modules/bip-senses';
@@ -23,7 +23,8 @@ import { Mind } from './src/brain/mind';
 import { setStorage } from './src/brain/store';
 import { Face } from './src/face/Face';
 import { FaceEngine, type EmotionName } from './src/face/engine';
-import { loadTheme } from './src/face/theme';
+import { Settings, loadPrefs } from './src/face/Settings';
+import { hasTheme, loadTheme } from './src/face/theme';
 import { toneWav } from './src/voice/droidVoice';
 import { playWav } from './src/voice/player';
 import { speak } from './src/voice/speak';
@@ -40,6 +41,8 @@ const TAP_LINES: [EmotionName, string][] = [
   ['emocionado', '¿Jugamos? Di «Bip, vamos a jugar».'],
   ['curioso', 'Prueba: «Bip, ponte azul».'],
   ['contento', 'Salúdame con la mano.'],
+  ['curioso', 'Toca tres veces seguidas para ver mis ajustes.'],
+  ['pensando', 'Prueba: «avísame en 5 minutos».'],
 ];
 
 const buzz: Buzz = (kind) => {
@@ -109,8 +112,25 @@ export default function App() {
       senses: (on) => senses.current(on),
       width: logicalWidth,
     });
+    i.life.baseVolume = loadPrefs().volume;
     return { mind: m, instinct: i };
   }, [engine]);
+  // la primera vez que se abre la app, Bip empieza con el panel para personalizarlo
+  const firstRun = useMemo(() => !hasTheme(), []);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsRef = useRef(false);
+  const openSettings = useCallback(() => {
+    settingsRef.current = true;
+    setSettingsOpen(true);
+  }, []);
+  const closeSettings = useCallback(() => {
+    settingsRef.current = false;
+    setSettingsOpen(false);
+    instinct.settingsClosed(firstRun);
+  }, [instinct, firstRun]);
+  instinct.onSettings = openSettings;
+  const taps = useRef<number[]>([]);
+  const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const line = useRef(0);
   if (Platform.OS === 'web') (globalThis as unknown as { bip: object }).bip = { engine, mind, instinct };
 
@@ -156,10 +176,10 @@ export default function App() {
       const r = await startSenses();
       if (!r || cancelled) return;
       later(1200, () => {
-        instinct.markGreeted();
-        const lines = instinct.life.greeting(0);
-        speak(engine, lines[0], 'contento');
-        if (lines.length > 1) instinct.life.chain(lines.slice(1), 'curioso', 3.2);
+        if (firstRun) {
+          instinct.openSettings();
+          instinct.speakTo('contento', '¡Hola! Elige cómo quieres que sea y toca «Listo».');
+        } else instinct.startGreeting();
       });
       if (!r.camera) later(4200, () => speak(engine, 'No puedo verte: dame permiso de cámara en Ajustes.', 'triste'));
       const problem = hearingProblem(r.hearing);
@@ -196,7 +216,7 @@ export default function App() {
       appSub.remove();
       stopSenses();
     };
-  }, [engine, instinct, mind]);
+  }, [engine, instinct, mind, firstRun]);
 
   // --------------------------------------------------- cuerpo: movimiento y batería
   useEffect(() => {
@@ -234,7 +254,7 @@ export default function App() {
     let lastY = 0;
     let travelled = 0;
     return PanResponder.create({
-      onMoveShouldSetPanResponderCapture: (_e, g) => !instinct.games.playing && Math.abs(g.dx) + Math.abs(g.dy) > 14,
+      onMoveShouldSetPanResponderCapture: (_e, g) => !instinct.games.playing && !settingsRef.current && Math.abs(g.dx) + Math.abs(g.dy) > 14,
       onPanResponderGrant: (_e, g) => {
         lastX = g.moveX || g.x0;
         lastY = g.moveY || g.y0;
@@ -270,11 +290,23 @@ export default function App() {
       instinct.wake('¿Mmm? ¡Ah, hola!');
       return;
     }
-    const [emo, text] = TAP_LINES[line.current++ % TAP_LINES.length];
-    speak(engine, text, emo, { volume: instinct.life.volume() });
+    // tres toques seguidos: ajustes. Si no, al poquito dice una de sus frases
+    const now = Date.now();
+    taps.current = [...taps.current.filter((t) => now - t < 900), now];
+    if (tapTimer.current) clearTimeout(tapTimer.current);
+    if (taps.current.length >= 3) {
+      taps.current = [];
+      instinct.openSettings();
+      return;
+    }
+    tapTimer.current = setTimeout(() => {
+      const [emo, text] = TAP_LINES[line.current++ % TAP_LINES.length];
+      instinct.speakTo(emo, text);
+    }, 420);
   };
 
   const onLongPress = () => {
+    if (settingsRef.current) return;
     buzz('strong');
     if (instinct.life.privateMode) {
       instinct.life.leavePrivate();
@@ -296,6 +328,15 @@ export default function App() {
       >
         <Face engine={engine} />
       </Pressable>
+      {settingsOpen && (
+        <Settings
+          engine={engine}
+          instinct={instinct}
+          first={firstRun}
+          onClose={closeSettings}
+          onPreviewVoice={() => void speak(engine, '¡Así sueno!', 'feliz', { volume: instinct.life.volume() })}
+        />
+      )}
     </View>
   );
 }

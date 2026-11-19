@@ -40,13 +40,18 @@ const EMOS: EmotionName[] = [
   'emocionado',
 ];
 
+/** Cosas que la mente puede hacer, además de hablar. */
+export const ACTIONS = ['ninguna', 'juegos', 'miradas', 'caras', 'simon', 'ppt', 'numero', 'adivinanzas'] as const;
+export type MindAction = (typeof ACTIONS)[number];
+
 const SCHEMA = {
   type: 'object',
   properties: {
     emocion: { type: 'string', enum: EMOS },
     frase: { type: 'string', maxLength: 170 },
+    accion: { type: 'string', enum: ACTIONS },
   },
-  required: ['emocion', 'frase'],
+  required: ['emocion', 'frase', 'accion'],
 };
 
 const SCHEMA_SEARCH = {
@@ -55,6 +60,17 @@ const SCHEMA_SEARCH = {
     emocion: { type: 'string', enum: EMOS },
     frase: { type: 'string', maxLength: 170 },
     buscar: { type: 'string', maxLength: 60 },
+  },
+  required: ['emocion', 'frase', 'buscar'],
+};
+
+/** Igual, pero obligando a escribir qué buscar (para preguntas sobre cosas reales). */
+const SCHEMA_MUST_SEARCH = {
+  type: 'object',
+  properties: {
+    emocion: { type: 'string', enum: EMOS },
+    frase: { type: 'string', maxLength: 120 },
+    buscar: { type: 'string', minLength: 2, maxLength: 60 },
   },
   required: ['emocion', 'frase', 'buscar'],
 };
@@ -94,7 +110,9 @@ Reglas:
 - Responde siempre en español de España.
 - Frases muy cortas: una o dos, como mucho 25 palabras. Sin listas, sin emojis, sin comillas.
 - No inventes cosas sobre la persona. Usa lo que recuerdas de ella solo si viene a cuento.
+- NUNCA inventes títulos de canciones, películas, libros, nombres, fechas ni cifras. Si no lo sabes seguro, búscalo o di que no lo sabes.
 - No puedes hacer cosas fuera de tu pantalla. Puedes buscar datos en internet cuando se te indica cómo.
+- Si la persona quiere jugar, o acepta un juego que tú propusiste, pon en "accion" ese juego (o "juegos" para que elija). Si no, "ninguna".
 - Elige la emoción que pondrá tu cara.
 Responde solo con JSON.`;
 
@@ -133,7 +151,22 @@ function thought(j: Record<string, unknown> | null): (Thought & { buscar?: strin
   if (!text) return null;
   const emo = EMOS.includes(j.emocion as EmotionName) ? (j.emocion as EmotionName) : 'neutral';
   const buscar = typeof j.buscar === 'string' ? j.buscar.trim() : '';
-  return { emo, text, buscar: buscar || undefined };
+  const accion = ACTIONS.includes(j.accion as MindAction) && j.accion !== 'ninguna' ? (j.accion as MindAction) : undefined;
+  return { emo, text, buscar: buscar || undefined, accion };
+}
+
+/** ¿Pregunta por cosas reales (canciones, películas, personas, cifras...)? Ahí no hay que fiarse de la memoria del modelo. */
+export function needsFacts(text: string) {
+  const t = text
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  if (/\b(cancion|canciones|disco|album|pelicula|peliculas|peli|serie|series|libro|libros|novela|autor|autora|cantante|grupo|banda|actor|actriz|director|futbolista|equipo|jugador|presidente|capital|poblacion|habitantes|cuantos anos|cuando nacio|cuando murio|cuando fue|en que ano|que ano|record|campeon|ganador|gano|premio|inventor|invento|descubrio|mide|altura|distancia|temperatura de)\b/.test(t)) {
+    return true;
+  }
+  // un nombre propio en mitad de la frase (el reconocedor de voz los escribe con mayúscula)
+  const proper = text.match(/\s([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)*)/g) ?? [];
+  return proper.some((p) => !/^(Bip|Vip|Pip)$/.test(p.trim()));
 }
 
 /** ¿Es una pregunta que quizá necesite buscar un dato? */
@@ -264,23 +297,31 @@ export class Mind implements MindLike {
   }
 
   /** Contesta a lo que le han dicho (buscando en internet si le falta un dato). */
-  async think(heard: string, s: Situation): Promise<Thought | null> {
+  async think(heard: string, s: Situation, asked?: string): Promise<Thought | null> {
     if (performance.now() - this.lastChatAt > 10 * 60_000) this.history = [];
     const who = this.whoName() ?? 'La persona';
-    const said = `${who} te dice: «${heard}»`;
+    // si contesta a una pregunta de Bip ("sí", "vale"), la mente tiene que saber cuál era
+    const said = `${asked ? `(Tú le acabas de decir: «${asked}»)\n` : ''}${who} te dice: «${heard}»`;
     const base = `${context(s, this.notes(heard))}\n${said}`;
-    const canSearch = !!this.lookup && looksLikeQuestion(heard);
+    const facts = !!this.lookup && needsFacts(heard);
+    const canSearch = !!this.lookup && (facts || looksLikeQuestion(heard));
     if (!canSearch) {
-      const t = thought(await this.ask(base, SCHEMA, 90));
+      const t = thought(await this.ask(base, SCHEMA, 100));
       if (t) this.remember(said, t);
       return t;
     }
     const first = thought(
-      await this.ask(
-        `${base}\n(Si para contestar necesitas un dato que no sabes seguro —actualidad, fechas, personas, lugares, cifras, el tiempo—, escribe en "buscar" de 2 a 5 palabras para buscarlo en internet y en "frase" algo como "Déjame que lo busque". Si no hace falta, deja "buscar" vacío.)`,
-        SCHEMA_SEARCH,
-        100,
-      ),
+      facts
+        ? await this.ask(
+            `${base}\n(Esto va de cosas reales: NO contestes de memoria. Escribe en "buscar" de 2 a 5 palabras para buscarlo en internet —por ejemplo, el nombre de la persona, la película o el grupo y de qué se trata— y en "frase" algo como "Déjame que lo mire".)`,
+            SCHEMA_MUST_SEARCH,
+            70,
+          )
+        : await this.ask(
+            `${base}\n(Si para contestar necesitas un dato que no sabes seguro —actualidad, fechas, personas, lugares, cifras, el tiempo—, escribe en "buscar" de 2 a 5 palabras para buscarlo en internet y en "frase" algo como "Déjame que lo busque". Si no hace falta, deja "buscar" vacío.)`,
+            SCHEMA_SEARCH,
+            100,
+          ),
     );
     if (!first?.buscar || !this.lookup) {
       if (first) this.remember(said, first);
@@ -291,8 +332,8 @@ export class Mind implements MindLike {
     try {
       const found = await this.lookup(first.buscar);
       extra = found
-        ? `(Has buscado «${first.buscar}» en internet. En ${found.source} pone: «${found.text}». Contesta con eso, en una o dos frases cortas y con tus palabras.)`
-        : `(Has buscado «${first.buscar}» en internet y no has encontrado nada claro. Díselo con gracia.)`;
+        ? `(Has buscado «${first.buscar}» en internet. En ${found.source} pone: «${found.text}». Contesta con eso, en una o dos frases cortas y con tus palabras. Usa SOLO lo que pone ahí: no añadas títulos, nombres ni datos que no aparezcan. Si no responde a la pregunta, di que no lo has encontrado.)`
+        : `(Has buscado «${first.buscar}» en internet y no has encontrado nada claro. Díselo con gracia y no inventes nada.)`;
     } catch {
       extra = `(Has intentado buscar «${first.buscar}» en internet, pero ahora no hay conexión. Díselo con gracia.)`;
     }

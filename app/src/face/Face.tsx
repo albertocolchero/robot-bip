@@ -55,7 +55,8 @@ export function Face({ engine }: { engine: FaceEngine }) {
     );
   });
 
-  if (engine.subtitle && now < engine.subUntil) {
+  // con el panel de ajustes abierto (la cara sube) el subtítulo quedaría tapado: el panel ya lo explica
+  if (engine.subtitle && now < engine.subUntil && engine.lift === 0) {
     let n = engine.subtitle.length;
     const sp = engine.speech;
     if (sp) {
@@ -96,6 +97,13 @@ export function Face({ engine }: { engine: FaceEngine }) {
   }
 
   const ov = engine.overlay;
+  if (engine.timerText && !ov?.score) {
+    texts.push(
+      <Text key="timer" style={[styles.ovScore, { color: glow, opacity: 0.85, fontSize: 11 * s, top: 8 * s, right: 14 * s }]}>
+        ⏱ {engine.timerText}
+      </Text>,
+    );
+  }
   if (ov) {
     const padsOn = !!ov.pads;
     if (ov.title) {

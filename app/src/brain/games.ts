@@ -8,8 +8,11 @@
 import type { EmotionName, FaceEngine } from '../face/engine';
 import { padRects } from '../face/padRects';
 import type { Perception, ExprLabel } from './perception';
+import { parseNumber } from './numbers';
 import { readJSON, writeJSON } from './store';
 import { normalize } from './talk';
+
+export { parseNumber };
 
 export type GameName = 'miradas' | 'caras' | 'simon' | 'ppt' | 'numero' | 'adivinanzas';
 
@@ -408,31 +411,6 @@ class RockPaper extends Game {
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 // ------------------------------------------------------------------ adivina el número
-const UNITS: Record<string, number> = {
-  cero: 0, uno: 1, un: 1, una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10,
-  once: 11, doce: 12, trece: 13, catorce: 14, quince: 15, dieciseis: 16, diecisiete: 17, dieciocho: 18, diecinueve: 19,
-  veinte: 20, veintiuno: 21, veintiun: 21, veintidos: 22, veintitres: 23, veinticuatro: 24, veinticinco: 25,
-  veintiseis: 26, veintisiete: 27, veintiocho: 28, veintinueve: 29,
-};
-const TENS: Record<string, number> = { treinta: 30, cuarenta: 40, cincuenta: 50, sesenta: 60, setenta: 70, ochenta: 80, noventa: 90, cien: 100, ciento: 100 };
-
-/** "37", "treinta y siete", "cien", "veintidós"... */
-export function parseNumber(text: string): number | null {
-  const d = text.match(/\b(\d{1,3})\b/);
-  if (d) return Number(d[1]);
-  const words = normalize(text).split(' ');
-  for (let i = 0; i < words.length; i++) {
-    const w = words[i];
-    if (w in TENS) {
-      let n = TENS[w];
-      if (words[i + 1] === 'y' && words[i + 2] in UNITS) n += UNITS[words[i + 2]];
-      return n;
-    }
-    if (w in UNITS) return UNITS[w];
-  }
-  return null;
-}
-
 class Number100 extends Game {
   readonly name = 'numero';
   private secret = 1 + Math.floor(Math.random() * 100);
@@ -539,7 +517,15 @@ class Riddles extends Game {
       this.io.listenFor(40_000);
       return true;
     }
-    if (r.a.some((a) => ` ${t} `.includes(` ${a} `))) {
+    const hit = r.a.some((a) => ` ${t} `.includes(` ${a} `));
+    if (!hit) {
+      // repetir la adivinanza en voz alta, o pensar en alto, no cuenta como intento
+      const words = t.split(' ').filter(Boolean);
+      const riddle = new Set(normalize(r.q.join(' ')).split(' '));
+      const overlap = words.filter((w) => riddle.has(w)).length / Math.max(1, words.length);
+      if ((words.length >= 2 && overlap >= 0.75) || (words.length >= 3 && overlap > 0.5) || words.length > 6) return true;
+    }
+    if (hit) {
       this.points++;
       this.io.engine.burst('sparkle', 8);
       this.io.speak('emocionado', `¡Sí! Es ${r.answer}.${this.hinted ? '' : ' ¡Y sin pista!'}`);
@@ -580,6 +566,11 @@ export class Games {
     return !!this.active;
   }
 
+  /** El último juego al que habéis jugado. */
+  get lastGame() {
+    return this.last;
+  }
+
   /** Mira si la frase va de juegos. Devuelve qué decir (o null si no iba de esto). */
   request(raw: string): { emo: EmotionName; text: string } | null {
     const t = normalize(raw);
@@ -599,6 +590,10 @@ export class Games {
     if (wantsToPlay || choosing) {
       const g = GAME_LIST.find((x) => x.re.test(t));
       if (g) return this.start(g.name);
+      if (choosing && /\b(cualquiera|elige tu|el que quieras|lo que quieras|sorprendeme|me da igual|tu eliges)\b/.test(t)) {
+        const pool = GAME_LIST.filter((x) => this.io.perception.hasReader || (x.name !== 'miradas' && x.name !== 'caras'));
+        return this.start(pool[Math.floor(Math.random() * pool.length)].name);
+      }
       if (wantsToPlay) {
         this.choosingUntil = now + 30_000;
         this.io.listenFor(30_000);
@@ -606,6 +601,13 @@ export class Games {
       }
     }
     return null;
+  }
+
+  /** El menú de juegos (cuando aceptas jugar sin decir a qué). */
+  menu(): { emo: EmotionName; text: string } {
+    this.choosingUntil = this.io.now() + 30_000;
+    this.io.listenFor(30_000);
+    return { emo: 'emocionado', text: '¡Bien! Sé jugar al duelo de miradas, imita mi cara, Simón, piedra papel o tijera, adivina el número y adivinanzas. ¿A cuál?' };
   }
 
   start(name: GameName): { emo: EmotionName; text: string } | null {

@@ -43,7 +43,7 @@ export type Situation = {
   dark: boolean;
 };
 
-export type Thought = { emo: EmotionName; text: string };
+export type Thought = { emo: EmotionName; text: string; accion?: string };
 export type Fact = { nombre: string; tipo: CardKind; dato: string };
 
 /** Lo que Life necesita de la mente (así se puede probar sin el modelo de verdad). */
@@ -149,11 +149,19 @@ export class Life {
     return a > b ? h >= a || h < b : h >= a && h < b;
   }
 
+  /** Volumen elegido en los ajustes (0,2 a 1). */
+  baseVolume = 1;
+
   /** Volumen de la voz ahora mismo. */
   volume(now = this.d.now()) {
-    if (this.inQuietHours(now)) return 0.3;
-    if (now < this.quietUntil || now < this.focusUntil) return 0.45;
-    return 1;
+    if (this.inQuietHours(now)) return 0.3 * this.baseVolume;
+    if (now < this.quietUntil || now < this.focusUntil) return 0.45 * this.baseVolume;
+    return this.baseVolume;
+  }
+
+  setQuietHours(from: number, to: number) {
+    this.journal.settings = { quietFrom: ((from % 24) + 24) % 24, quietTo: ((to % 24) + 24) % 24 };
+    flushJournal(this.journal);
   }
 
   /** ¿Puede reaccionar en voz alta por su cuenta (saludar, comentar)? */
@@ -161,14 +169,23 @@ export class Life {
     return !this.privateMode && now >= this.quietUntil && now >= this.focusUntil;
   }
 
+  /** Quién le está hablando ahora (lo conecta quien reconoce caras). */
+  speakerName: (() => string | null) | null = null;
+  /** Qué hacer cuando alguien le dice su nombre (lo conecta quien reconoce caras). Devuelve qué contestar. */
+  onName: ((name: string) => string) | null = null;
+  /** Más cosas que la mente debe saber (quién hay delante, avisos...). */
+  extraNotes: (() => string) | null = null;
+
   get who() {
-    return this.d.memory.name ?? 'La persona';
+    return this.speakerName?.() ?? this.d.memory.name ?? 'La persona';
   }
 
   /** Lo que la mente debe saber ahora (memoria + diario + ánimo), corto. */
   notes(heard = '') {
     const now = this.d.now();
-    const bits = [describeMemory(this.d.memory), describeJournal(this.journal, now, heard), describeMood(this.mood)];
+    // con varias personas en casa, "la persona" es quien te habla ahora
+    const mem = this.speakerName ? { ...this.d.memory, name: this.speakerName() } : this.d.memory;
+    const bits = [describeMemory(mem), this.extraNotes?.() ?? '', describeJournal(this.journal, now, heard), describeMood(this.mood)];
     const u = this.userMood;
     if (u) bits.push(`Por su cara, la persona parece ${u}.`);
     return bits.filter(Boolean).join(' ');
@@ -239,7 +256,7 @@ export class Life {
     if (this.napping && this.d.sleeping() && !this.inQuietHours(now) && !this.privateMode) {
       this.napping = false;
       this.wokeAt = now;
-      const lines = this.greeting(before ? now - before : 4 * 60 * MIN);
+      const lines = this.greeting(before ? now - before : 4 * 60 * MIN, this.speakerName ? this.speakerName() : undefined);
       this.d.wake(lines[0]);
       this.chain(lines.slice(1), 'contento', speechSeconds(lines[0], 'contento') + 1.2);
       return true;
@@ -300,6 +317,7 @@ export class Life {
     if (p.kind === 'nombre') {
       const name = nameFrom(text, true);
       if (!name) return null;
+      if (this.onName) return this.onName(name);
       this.d.memory.name = name;
       saveMemory(this.d.memory);
       this.learnedFact(`te llamas ${name}`);
@@ -330,19 +348,20 @@ export class Life {
   }
 
   // ================================================================ saludos con memoria
-  /** Qué decir al verte llegar: depende de la hora, de tu nombre y de lo que sabe. */
-  greeting(absentMs: number): string[] {
+  /** Qué decir al verte llegar: depende de la hora, de tu nombre y de lo que sabe.
+   *  name: a quién saluda (si no se dice, a quien recuerda; si es null, sin nombre y sin presentarse). */
+  greeting(absentMs: number, who?: string | null): string[] {
     const now = this.d.now();
     const d = new Date(now);
     const h = this.hour(now);
     const today = dayKey(d);
-    const name = this.d.memory.name;
+    const name = who === undefined ? this.d.memory.name : who;
     const hi = h < 6 ? '¡Uy, qué tarde! Hola' : h < 13 ? '¡Buenos días' : h < 21 ? '¡Buenas tardes' : '¡Buenas noches';
     const first = `${hi}${name ? `, ${name}` : ''}!`;
     const lines = [first];
 
     // ¿primera vez que os veis?
-    if (!name && daysTogether(this.journal) <= 1 && !isDone(this.journal, today, 'presentacion')) {
+    if (who === undefined && !name && daysTogether(this.journal) <= 1 && !isDone(this.journal, today, 'presentacion')) {
       markDone(this.journal, today, 'presentacion');
       lines[0] = '¡Hola! Soy Bip, tu droide de escritorio.';
       this.expect('nombre', '¿Cómo te llamas?');
@@ -494,11 +513,21 @@ export class Life {
     let at = startAfter;
     for (const line of lines) {
       const delay = at;
-      setTimeout(() => {
+      const timer = setTimeout(() => {
+        this.chainTimers = this.chainTimers.filter((x) => x !== timer);
         if (!this.privateMode) this.d.speak(emo, line);
       }, delay * 1000);
+      this.chainTimers.push(timer);
       at += speechSeconds(line, emo) + 1.4;
     }
+  }
+
+  private chainTimers: ReturnType<typeof setTimeout>[] = [];
+
+  /** Le han interrumpido: no dice lo que le quedaba por decir. */
+  cancelChain() {
+    this.chainTimers.forEach(clearTimeout);
+    this.chainTimers = [];
   }
 
   // ================================================================ el repaso

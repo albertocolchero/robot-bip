@@ -4,6 +4,8 @@
 //  - Voz: reproduce los pitidos (WAV) con el altavoz, compatible con estar escuchando.
 //  - Fase 5: lee tu expresion (MediaPipe, dentro del iPhone), tus gestos con la mano
 //    (Vision de Apple) y el volumen del sonido (para palmadas y musica).
+//  - Para distinguir personas: una "huella" de cada cara (Vision) y las proporciones de la cara
+//    (MediaPipe). Y ve perros y gatos (Vision). Nada sale del iPhone.
 import AVFoundation
 import ExpoModulesCore
 import ImageIO
@@ -186,6 +188,12 @@ final class BipEyes: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     return r
   }()
   private var faceReader: FaceLandmarker?
+  private let printRequest = VNGenerateImageFeaturePrintRequest()
+  private let animalRequest = VNRecognizeAnimalsRequest()
+  private var lastPrint: CFTimeInterval = 0
+  private var lastAnimals: CFTimeInterval = 0
+  /// Proporciones de la ultima cara leida por MediaPipe (para distinguir personas).
+  private var lastGeo: [Double]?
   private var lastExpr: CFTimeInterval = 0
   private var lastHands: CFTimeInterval = 0
   private var lastStamp = 0
@@ -288,6 +296,22 @@ final class BipEyes: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
           let result = try? reader.detect(videoFrame: image, timestampInMilliseconds: stamp),
           let shapes = result.faceBlendshapes.first
     else { return nil }
+    if let points = result.faceLandmarks.first, points.count > 454 {
+      let w = Double(CVPixelBufferGetWidth(CMSampleBufferGetImageBuffer(sampleBuffer)!))
+      let h = Double(CVPixelBufferGetHeight(CMSampleBufferGetImageBuffer(sampleBuffer)!))
+      func d(_ a: Int, _ b: Int) -> Double {
+        let p = points[a]
+        let q = points[b]
+        let dx = Double(p.x - q.x) * w
+        let dy = Double(p.y - q.y) * h
+        let dz = Double(p.z - q.z) * w
+        return (dx * dx + dy * dy + dz * dz).squareRoot()
+      }
+      let iod = d(33, 263)
+      if iod > 1 {
+        lastGeo = [d(133, 362), d(168, 1), d(98, 327), d(234, 454), d(172, 397), d(10, 168), d(33, 133), d(362, 263)].map { $0 / iod }
+      }
+    }
     var b: [String: Double] = [:]
     for c in shapes.categories {
       if let name = c.categoryName { b[name] = Double(c.score) }
@@ -309,6 +333,31 @@ final class BipEyes: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
       "sneer": avg("noseSneerLeft", "noseSneerRight"),
       "press": avg("mouthPressLeft", "mouthPressRight"),
     ]
+  }
+
+  /// La "huella" de una caja de la imagen (para reconocer a quien ya conoce).
+  private func featurePrint(_ handler: VNImageRequestHandler, box: CGRect) -> [Double]? {
+    let roi = box.insetBy(dx: -box.width * 0.2, dy: -box.height * 0.2).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+    if roi.isNull || roi.width < 0.05 { return nil }
+    printRequest.regionOfInterest = roi
+    guard (try? handler.perform([printRequest])) != nil,
+          let o = printRequest.results?.first
+    else { return nil }
+    let n = o.elementCount
+    var out = [Double](repeating: 0, count: n)
+    o.data.withUnsafeBytes { raw in
+      switch o.elementType {
+      case .float:
+        let f = raw.bindMemory(to: Float.self)
+        for i in 0..<min(n, f.count) { out[i] = Double(f[i]) }
+      case .double:
+        let f = raw.bindMemory(to: Double.self)
+        for i in 0..<min(n, f.count) { out[i] = f[i] }
+      default:
+        break
+      }
+    }
+    return out
   }
 
   /// Gesto de la mano: palma, puno, paz (tijera), pulgar arriba, senala u otro.
@@ -371,7 +420,11 @@ final class BipEyes: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     let wantHands = now - lastHands > (fast ? 0.1 : 0.3)
     do {
       try handler.perform(wantHands ? [faceRequest, handRequest] : [faceRequest])
-      for face in faceRequest.results ?? [] {
+      let wantPrint = now - lastPrint > 1.2
+      if wantPrint { lastPrint = now }
+      var printed = 0
+      let sorted = (faceRequest.results ?? []).sorted { $0.boundingBox.width > $1.boundingBox.width }
+      for face in sorted {
         let box = face.boundingBox
         var item: [String: Any] = [
           "x": Double(box.midX),
@@ -379,8 +432,36 @@ final class BipEyes: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
           "size": Double(max(box.width, box.height)),
           "confidence": Double(face.confidence),
         ]
-        if let yaw = face.yaw { item["yaw"] = yaw.doubleValue }
+        let yaw = face.yaw?.doubleValue ?? 0
+        if face.yaw != nil { item["yaw"] = yaw }
+        // la huella, solo de caras cerca y de frente (como mucho dos)
+        if wantPrint && printed < 2 && max(box.width, box.height) > 0.12 && abs(yaw) < 0.45,
+           let fp = featurePrint(handler, box: box) {
+          item["fp"] = fp
+          printed += 1
+        }
         faces.append(item)
+      }
+      // perros y gatos
+      if now - lastAnimals > 1.5 {
+        lastAnimals = now
+        if (try? handler.perform([animalRequest])) != nil {
+          var animals: [[String: Any]] = []
+          for a in animalRequest.results ?? [] {
+            guard let label = a.labels.first, label.confidence > 0.6 else { continue }
+            let kind = label.identifier == "Dog" ? "perro" : label.identifier == "Cat" ? "gato" : "otro"
+            if kind == "otro" { continue }
+            let box = a.boundingBox
+            animals.append([
+              "kind": kind,
+              "x": Double(box.midX),
+              "y": Double(1.0 - box.midY),
+              "size": Double(max(box.width, box.height)),
+              "confidence": Double(label.confidence),
+            ])
+          }
+          payload["animals"] = animals
+        }
       }
     } catch {
       payload["error"] = error.localizedDescription
@@ -396,6 +477,7 @@ final class BipEyes: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     if close && now - lastExpr > (fast ? 0.04 : 0.2), let expr = readExpression(sampleBuffer, now: now) {
       lastExpr = now
       payload["expr"] = expr
+      if let geo = lastGeo { payload["geo"] = geo }
     }
     onSee?(payload)
   }

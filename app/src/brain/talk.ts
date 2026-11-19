@@ -28,6 +28,21 @@ export function mentionsName(text: string) {
   return /\b(bip|vip|pip|beep|bib|bit|biip)\b/.test(normalize(text));
 }
 
+const CALL = /^(?:(?:bip|vip|pip|oye|pues|eh|mira|hombre)\s+)+/;
+
+/** ¿Dice que sí? ("sí", "vale", "venga", "claro", "vamos"...) */
+export function isYes(raw: string) {
+  const t = normalize(raw).replace(CALL, '');
+  if (isNo(raw)) return false;
+  return /^(si|sii|sip|vale|venga|claro|vamos|dale|ok|okay|okey|por supuesto|me apetece|guay|genial|va|de acuerdo|porfa|por favor|exacto|correcto|eso es|afirmativo|soy yo|el mismo|la misma|yes|bueno vale|pues claro|obvio|sin duda|me parece bien|como no)\b/.test(t);
+}
+
+/** ¿Dice que no? */
+export function isNo(raw: string) {
+  const t = normalize(raw).replace(CALL, '');
+  return /^(no|nop|nope|ahora no|luego|despues|mas tarde|otro rato|paso|nah|para nada|que va|negativo|mejor no|no gracias|tampoco)\b/.test(t);
+}
+
 function has(t: string, re: RegExp) {
   return re.test(t);
 }

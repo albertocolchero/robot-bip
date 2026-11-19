@@ -55,6 +55,28 @@ export function saveTheme(t: Theme) {
   writeJSON(FILE, t);
 }
 
+/** ¿Ya lo ha personalizado alguna vez? (si no, es la primera vez que se abre la app) */
+export function hasTheme() {
+  return readJSON(FILE) !== null;
+}
+
+/** Cómo se llama cada efecto en el panel de ajustes. */
+export const EFFECT_INFO: Record<EffectName, string> = {
+  limpio: 'Limpio',
+  neon: 'Neón',
+  retro: 'Tele antigua',
+  holograma: 'Holograma',
+  plasma: 'Plasma',
+};
+
+export const SHAPE_INFO: Record<ShapeName, string> = {
+  redondo: 'Redondos',
+  circulo: 'Círculos',
+  capsula: 'Cápsulas',
+  cuadrado: 'Cuadrados',
+  ancho: 'Anchos',
+};
+
 const COLOR_WORDS: [RegExp, ColorName][] = [
   [/\b(menta|verde agua|turquesa)\b/, 'menta'],
   [/\b(cian|celeste|azul claro)\b/, 'cian'],

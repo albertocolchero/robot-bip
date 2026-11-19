@@ -8,6 +8,16 @@ export type SeenFace = {
   confidence: number;
   /** Giro de la cabeza en radianes (0 = mirando a Bip). */
   yaw?: number;
+  /** "Huella" de la cara (Vision), de vez en cuando: sirve para saber quién es. */
+  fp?: number[];
+};
+
+export type SeenAnimal = {
+  kind: 'perro' | 'gato';
+  x: number;
+  y: number;
+  size: number;
+  confidence: number;
 };
 
 /** Tu expresión, resumida de las 52 medidas de MediaPipe (cada una de 0 a 1). */
@@ -43,7 +53,11 @@ export type SeeEvent = {
   light?: number;
   /** Solo si el lector de caras está cargado y hay alguien cerca. */
   expr?: Expression;
+  /** Proporciones de la cara más cercana (MediaPipe): también ayudan a saber quién es. */
+  geo?: number[];
   hand?: SeenHand;
+  /** Perros y gatos a la vista (cada segundo y medio). */
+  animals?: SeenAnimal[];
   error?: string;
 };
 

@@ -205,6 +205,11 @@ export class FaceEngine {
   heard = '';
   heardUntil = 0;
   badge: string | null = null;
+  /** Cuenta atrás de un temporizador (arriba a la derecha), o null. */
+  timerText: string | null = null;
+  /** Sube la cara (por ejemplo, para dejar sitio al panel de ajustes). En unidades lógicas. */
+  lift = 0;
+  private liftNow = 0;
   overlay: Overlay | null = null;
   particles: Particle[] = [];
   private nextParticle = 0;
@@ -498,6 +503,7 @@ export class FaceEngine {
     const j = f.jitter;
     const shakeX = j > 0.01 ? (Math.random() * 2 - 1) * j * 1.6 : 0;
     const shakeY = j > 0.01 ? (Math.random() * 2 - 1) * j * 1.2 : 0;
-    return { x: this.body.x.x + shakeX, y: this.body.x.y + breathe + shakeY, squash: this.body.x.squash, breathe };
+    this.liftNow += (this.lift - this.liftNow) * 0.12;
+    return { x: this.body.x.x + shakeX, y: this.body.x.y + breathe + shakeY - this.liftNow, squash: this.body.x.squash, breathe };
   }
 }

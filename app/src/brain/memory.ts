@@ -46,17 +46,26 @@ export function nameFrom(raw: string, loose = false): string | null {
   const strict = raw.match(/(?:me llamo|mi nombre es|ll[aá]mame)\s+(.+)/i);
   const soy = loose ? raw.match(/\bsoy\s+(.+)/i) : null;
   let src = strict?.[1] ?? soy?.[1];
-  if (!src && loose && raw.trim().split(/\s+/).length <= 3) src = raw;
+  // solo una o dos palabras sueltas ("Ana", "Ana García"): si no, es otra frase
+  const bare = !src && loose && raw.trim().replace(/[.!¡¿?,]/g, ' ').trim().split(/\s+/).length <= 3;
+  if (bare) src = raw;
   if (!src) return null;
   const words = src.replace(/[.!¡¿?,]/g, ' ').split(/\s+/).filter(Boolean);
   while (words.length && FILLER.test(words[0])) words.shift();
+  if (bare && words.length > 2) return null;
   const name: string[] = [];
   for (const w of words) {
-    if (!NAME_WORD.test(w) || NOT_NAMES.test(w) || name.length === 2) break;
+    if (!NAME_WORD.test(w) || NOT_NAMES.test(w) || NOT_NAMES_2.test(w) || name.length === 2) break;
+    // el segundo nombre o apellido, solo si viene con mayúscula (así "Ana, encantada" no es un apellido)
+    if (name.length === 1 && w.charAt(0) === w.charAt(0).toLowerCase()) break;
     name.push(w);
   }
   return name.length ? name.map(capitalize).join(' ') : null;
 }
+
+/** Palabras que nunca son un nombre, aunque vayan solas ("vamos", "claro", "gracias"...). */
+const NOT_NAMES_2 =
+  /^(a|al|de|del|en|con|por|para|mi|mis|tu|tus|su|sus|me|se|le|nos|os|ya|ahora|luego|claro|gracias|perdona|perdon|perdón|espera|vamos|venga|quiero|quieres|puedes|juega|jugar|juguemos|jugamos|como|cómo|cuando|donde|cuanto|porque|eso|esto|aqui|aquí|alli|allí|otro|otra|encantado|encantada|igualmente|ok|okay|vaya|algo|todo|genial|perfecto|hombre|mujer|tio|tío|tia|tía|hey|adios|adiós|buenas|buenos|dias|días|tardes|noches|gato|gata|perro|perra|nadie|ninguno|cierto|verdad|exacto|vale|venga|dale|ayuda|para|stop|ajustes|cuenta|dime|oye|mira|qué|quién|quien|cual|cuál)$/i;
 
 /** Si la frase le pide recordar algo, lo guarda y dice qué contestar. Si no, null. */
 export function learn(m: Memory, raw: string, now = new Date()): Learned | null {

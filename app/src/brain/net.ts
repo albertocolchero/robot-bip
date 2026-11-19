@@ -36,11 +36,11 @@ export function tidy(text: string, max = 420) {
 async function wikipedia(q: string): Promise<Found | null> {
   const url =
     'https://es.wikipedia.org/w/api.php?action=query&generator=search&gsrlimit=1&prop=extracts&exintro=1' +
-    `&explaintext=1&exsentences=3&format=json&formatversion=2&origin=*&gsrsearch=${encodeURIComponent(q)}`;
+    `&explaintext=1&exsentences=6&format=json&formatversion=2&origin=*&gsrsearch=${encodeURIComponent(q)}`;
   const j = (await (await get(url)).json()) as { query?: { pages?: { title: string; extract?: string }[] } };
   const p = j.query?.pages?.[0];
   if (!p?.extract) return null;
-  return { source: 'Wikipedia', title: p.title, text: tidy(p.extract) };
+  return { source: 'Wikipedia', title: p.title, text: tidy(p.extract, 700) };
 }
 
 async function duckduckgo(q: string): Promise<Found | null> {

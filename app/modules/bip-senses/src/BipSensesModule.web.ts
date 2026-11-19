@@ -4,6 +4,7 @@
 //  - Expresión: window.bipCara({ smile: 0.9 })  (se queda puesta hasta window.bipCara(null))
 //  - Mano: window.bipMano('palma')  (o null para quitarla)
 //  - Sonido: window.bipSuena(0.9)  (un golpe de volumen, como una palmada)
+//  - Quién es: window.bipQuien('A') o 'B' (dos personas de mentira), y window.bipPerro(true)
 //  - Voz: reproduce el WAV con el reproductor del navegador.
 import { NativeModule, registerWebModule } from 'expo';
 
@@ -15,7 +16,26 @@ declare global {
     bipCara?: (e: Partial<Expression> | null) => void;
     bipMano?: (g: HandGesture | null) => void;
     bipSuena?: (level: number) => void;
+    bipQuien?: (who: string) => void;
+    bipPerro?: (on: boolean) => void;
   }
+}
+
+/** Una "huella" de mentira para cada persona: siempre parecida, con un poco de ruido. */
+function fakePrint(who: string) {
+  let seed = 0;
+  for (const c of who) seed = (seed * 31 + c.charCodeAt(0)) % 9973;
+  const v: number[] = [];
+  for (let i = 0; i < 64; i++) {
+    const base = Math.sin(seed * 12.9898 + i * 78.233) * 43758.5453;
+    v.push(base - Math.floor(base) + (Math.random() - 0.5) * 0.08);
+  }
+  return v;
+}
+
+function fakeGeo(who: string) {
+  const k = who === 'A' ? 0 : who === 'B' ? 1 : 2;
+  return [0.36, 0.55, 0.3, 1.6, 1.25, 0.6, 0.31, 0.31].map((x, i) => x * (1 + (k - 1) * 0.06 * (i % 2 ? 1 : -1)) + (Math.random() - 0.5) * 0.01);
 }
 
 const NEUTRAL: Expression = {
@@ -43,6 +63,9 @@ class BipSensesModule extends NativeModule<BipSensesEvents> {
   private expr: Expression | null = null;
   private faceReader = false;
   private hand: HandGesture | null = null;
+  private who = 'A';
+  private dog = false;
+  private lastPrint = 0;
   private soundLevel = 0.1;
   private audio: HTMLAudioElement | null = null;
   private onMove = (e: MouseEvent) => {
@@ -57,9 +80,18 @@ class BipSensesModule extends NativeModule<BipSensesEvents> {
   }
 
   private beat() {
-    const faces = this.mouse.inside ? [{ x: this.mouse.x, y: this.mouse.y, size: 0.3, confidence: 1, yaw: 0 }] : [];
+    const faces: Parameters<BipSensesEvents['onSee']>[0]['faces'] = this.mouse.inside ? [{ x: this.mouse.x, y: this.mouse.y, size: 0.3, confidence: 1, yaw: 0 }] : [];
     const event: Parameters<BipSensesEvents['onSee']>[0] = { faces, light: 4 };
-    if (faces.length && this.faceReader) event.expr = { ...NEUTRAL, ...(this.expr ?? {}) };
+    const now = Date.now();
+    if (faces.length && now - this.lastPrint > 1200) {
+      this.lastPrint = now;
+      faces[0].fp = fakePrint(this.who);
+    }
+    if (faces.length && this.faceReader) {
+      event.expr = { ...NEUTRAL, ...(this.expr ?? {}) };
+      event.geo = fakeGeo(this.who);
+    }
+    if (this.dog) event.animals = [{ kind: 'perro', x: 0.3, y: 0.7, size: 0.25, confidence: 0.9 }];
     if (this.hand) event.hand = { gesture: this.hand, x: 0.5, y: 0.6, confidence: 0.9 };
     this.emit('onSee', event);
   }
@@ -73,6 +105,13 @@ class BipSensesModule extends NativeModule<BipSensesEvents> {
     };
     window.bipMano = (g) => {
       this.hand = g;
+    };
+    window.bipQuien = (who) => {
+      this.who = who;
+      this.lastPrint = 0;
+    };
+    window.bipPerro = (on) => {
+      this.dog = on;
     };
     this.timer = setInterval(() => this.beat(), this.fast ? 50 : this.intervalMs);
   }
