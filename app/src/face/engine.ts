@@ -69,6 +69,8 @@ export class FaceEngine {
   /** Si hay alguien delante, los ojos miran ahí en vez de vagar. */
   private gaze: [number, number] | null = null;
   /** Lucecita de "te estoy escuchando". */
+  /** 0..1 mientras descarga su cerebro; null si no hay descarga. */
+  progress: number | null = null;
   listeningUntil = 0;
   /** Lo último que ha oído (se muestra arriba, pequeño). */
   heard = '';

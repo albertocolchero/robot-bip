@@ -5,6 +5,8 @@ export type Reply = {
   emo: EmotionName;
   text: string;
   action?: 'sleep' | 'wake' | 'love';
+  /** Respuesta exacta (hora, fecha): mejor que la de la mente. */
+  fast?: boolean;
 };
 
 const DAYS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
@@ -73,11 +75,11 @@ export function understand(raw: string, ctx: { sleeping: boolean; now: Date; see
   if (has(t, /\b(que hora es|que hora tienes|dime la hora)\b/)) {
     const hh = String(ctx.now.getHours()).padStart(2, '0');
     const mm = String(ctx.now.getMinutes()).padStart(2, '0');
-    return { emo: 'pensando', text: `Son las ${hh}:${mm}.` };
+    return { emo: 'pensando', text: `Son las ${hh}:${mm}.`, fast: true };
   }
   if (has(t, /\b(que dia es|a que dia estamos|que fecha)\b/)) {
     const d = ctx.now;
-    return { emo: 'pensando', text: `Hoy es ${DAYS[d.getDay()]} ${d.getDate()} de ${MONTHS[d.getMonth()]}.` };
+    return { emo: 'pensando', text: `Hoy es ${DAYS[d.getDay()]} ${d.getDate()} de ${MONTHS[d.getMonth()]}.`, fast: true };
   }
   if (has(t, /\b(como estas|que tal estas|que tal)\b/)) {
     return { emo: 'contento', text: '¡Muy bien! Con ganas de aprender cosas.' };

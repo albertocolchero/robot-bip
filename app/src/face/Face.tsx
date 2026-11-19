@@ -171,6 +171,17 @@ export function Face({ engine }: { engine: FaceEngine }) {
       <View key="ear" style={[styles.dot, styles.earDot, { opacity: o, left: (MX - 4) * s, top: 14 * s, width: 8 * s, height: 8 * s, borderRadius: 4 * s }]} />,
     );
   }
+  // barra de "descargando mi cerebro"
+  if (engine.progress !== null) {
+    const bw = 140;
+    pieces.push(
+      <View key="pbg" style={[styles.track, { left: (MX - bw / 2) * s, top: 230 * s, width: bw * s, height: 3 * s, borderRadius: 1.5 * s }]} />,
+      <View
+        key="pfg"
+        style={[styles.dot, { left: (MX - bw / 2) * s, top: 230 * s, width: bw * Math.max(0.02, engine.progress) * s, height: 3 * s, borderRadius: 1.5 * s }]}
+      />,
+    );
+  }
   let heard: React.ReactNode = null;
   if (engine.heard && now < engine.heardUntil) {
     const fade = Math.min(1, (engine.heardUntil - now) / 600) * 0.6;
@@ -209,5 +220,6 @@ const styles = StyleSheet.create({
   z: { position: 'absolute', color: GLOW, fontWeight: '600' },
   sub: { position: 'absolute', color: '#D8F7EE', textAlign: 'center', fontFamily: MONO },
   heard: { position: 'absolute', color: '#9FB8B0', textAlign: 'center', fontFamily: MONO },
+  track: { position: 'absolute', backgroundColor: '#123A33' },
   earDot: { shadowColor: GLOW, shadowOpacity: 0.9, shadowRadius: 6, shadowOffset: { width: 0, height: 0 } },
 });

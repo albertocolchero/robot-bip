@@ -71,6 +71,62 @@ class BipSensesModule extends NativeModule<BipSensesEvents> {
     await audio.play().catch(() => undefined);
     return Number.isFinite(audio.duration) ? audio.duration : -1;
   }
+
+  // Cerebro simulado: la "descarga" tarda unos segundos y no baja nada.
+  private fakeDownload: ReturnType<typeof setInterval> | null = null;
+
+  modelPath(fileName: string): string | null {
+    return this.readText(`modelo-${fileName}`) ? `web://${fileName}` : null;
+  }
+
+  freeDiskBytes(): number {
+    return 64e9;
+  }
+
+  downloadModel(_url: string, fileName: string) {
+    if (this.fakeDownload) return;
+    const total = 3.11e9;
+    let received = 0;
+    this.emit('onModel', { state: 'start' });
+    this.fakeDownload = setInterval(() => {
+      received = Math.min(total, received + total / 12);
+      this.emit('onModel', { state: 'progress', received, total });
+      if (received >= total) {
+        this.cancelModelDownload();
+        this.writeText(`modelo-${fileName}`, 'ok');
+        this.emit('onModel', { state: 'done', path: `web://${fileName}` });
+      }
+    }, 500);
+  }
+
+  cancelModelDownload() {
+    if (this.fakeDownload) clearInterval(this.fakeDownload);
+    this.fakeDownload = null;
+  }
+
+  deleteModel(fileName: string) {
+    try {
+      localStorage.removeItem(`bip-modelo-${fileName}`);
+    } catch {
+      // sin almacenamiento en este navegador
+    }
+  }
+
+  readText(name: string): string | null {
+    try {
+      return localStorage.getItem(`bip-${name}`);
+    } catch {
+      return null;
+    }
+  }
+
+  writeText(name: string, text: string) {
+    try {
+      localStorage.setItem(`bip-${name}`, text);
+    } catch {
+      // sin almacenamiento en este navegador
+    }
+  }
 }
 
 export default registerWebModule(BipSensesModule, 'BipSensesModule');

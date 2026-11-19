@@ -2,7 +2,7 @@
   "expo": {
     "name": "Bip",
     "slug": "bip",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "orientation": "landscape",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -21,6 +21,10 @@
       },
       "runtimeVersion": {
         "policy": "appVersion"
+      },
+      "entitlements": {
+        "com.apple.developer.kernel.increased-memory-limit": true,
+        "com.apple.developer.kernel.extended-virtual-addressing": true
       }
     },
     "android": {
@@ -54,6 +58,14 @@
         "expo-sensors",
         {
           "motionPermission": "Bip nota cuándo lo mueves o lo levantas."
+        }
+      ],
+      [
+        "llama.rn",
+        {
+          "enableEntitlements": false,
+          "forceCxx20": true,
+          "enableOpenCLAndHexagon": false
         }
       ]
     ],

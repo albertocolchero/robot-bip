@@ -14,11 +14,12 @@ public class BipSensesModule: Module {
   private let eyes = BipEyes()
   private let ears = BipEars()
   private let voice = BipVoice()
+  private let models = BipModels()
 
   public func definition() -> ModuleDefinition {
     Name("BipSenses")
 
-    Events("onSee", "onHear")
+    Events("onSee", "onHear", "onModel")
 
     OnCreate {
       self.eyes.onSee = { [weak self] payload in
@@ -26,6 +27,9 @@ public class BipSensesModule: Module {
       }
       self.ears.onHear = { [weak self] payload in
         self?.sendEvent("onHear", payload.mapValues { Optional($0) })
+      }
+      self.models.onEvent = { [weak self] payload in
+        self?.sendEvent("onModel", payload.mapValues { Optional($0) })
       }
     }
 
@@ -72,6 +76,36 @@ public class BipSensesModule: Module {
       DispatchQueue.main.async {
         promise.resolve(self.voice.play(base64: base64))
       }
+    }
+
+    // --- Cerebro: el archivo del modelo se descarga una vez y vive en el iPhone
+    Function("modelPath") { (fileName: String) -> String? in
+      BipModels.existingPath(fileName)
+    }
+
+    Function("freeDiskBytes") { () -> Double in
+      BipModels.freeDiskBytes()
+    }
+
+    Function("downloadModel") { (url: String, fileName: String) in
+      DispatchQueue.main.async { self.models.download(url: url, fileName: fileName) }
+    }
+
+    Function("cancelModelDownload") {
+      DispatchQueue.main.async { self.models.cancel() }
+    }
+
+    Function("deleteModel") { (fileName: String) in
+      BipModels.delete(fileName)
+    }
+
+    // --- Memoria: textos pequeños (lo que Bip recuerda de ti)
+    Function("readText") { (name: String) -> String? in
+      BipStore.read(name)
+    }
+
+    Function("writeText") { (name: String, text: String) in
+      BipStore.write(name, text)
     }
   }
 }
@@ -406,5 +440,167 @@ final class BipVoice {
     } catch {
       return -1
     }
+  }
+}
+
+// MARK: - Descarga del modelo (solo por wifi, con reanudacion si se corta)
+
+final class BipModels: NSObject, URLSessionDownloadDelegate {
+  var onEvent: (([String: Any]) -> Void)?
+  private var session: URLSession?
+  private var task: URLSessionDownloadTask?
+  private var fileName = ""
+  private var lastEmit: CFTimeInterval = 0
+  private var finishedPath: String?
+  private var failure: String?
+  private var resumed = false
+
+  static var folder: URL {
+    let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    var dir = base.appendingPathComponent("bip-models", isDirectory: true)
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    var values = URLResourceValues()
+    values.isExcludedFromBackup = true
+    try? dir.setResourceValues(values)
+    return dir
+  }
+
+  static func safeName(_ name: String) -> String {
+    let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
+    return String(name.unicodeScalars.filter { allowed.contains($0) })
+  }
+
+  static func existingPath(_ name: String) -> String? {
+    let url = folder.appendingPathComponent(safeName(name))
+    guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+          let size = attrs[.size] as? NSNumber, size.int64Value > 0 else { return nil }
+    return url.path
+  }
+
+  static func resumeURL(_ name: String) -> URL {
+    FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+      .appendingPathComponent(safeName(name) + ".resume")
+  }
+
+  static func freeDiskBytes() -> Double {
+    let url = URL(fileURLWithPath: NSHomeDirectory())
+    if let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]),
+       let capacity = values.volumeAvailableCapacityForImportantUsage {
+      return Double(capacity)
+    }
+    return -1
+  }
+
+  static func delete(_ name: String) {
+    try? FileManager.default.removeItem(at: folder.appendingPathComponent(safeName(name)))
+    try? FileManager.default.removeItem(at: resumeURL(name))
+  }
+
+  func download(url: String, fileName: String) {
+    if task != nil { return }
+    guard let remote = URL(string: url) else {
+      emit(["state": "error", "error": "url"])
+      return
+    }
+    self.fileName = BipModels.safeName(fileName)
+    finishedPath = nil
+    failure = nil
+    if session == nil {
+      let config = URLSessionConfiguration.default
+      config.allowsCellularAccess = false // 3 GB: solo por wifi
+      config.waitsForConnectivity = true
+      config.timeoutIntervalForRequest = 90
+      session = URLSession(configuration: config, delegate: self, delegateQueue: OperationQueue.main)
+    }
+    let resumeFile = BipModels.resumeURL(self.fileName)
+    if let data = try? Data(contentsOf: resumeFile) {
+      try? FileManager.default.removeItem(at: resumeFile)
+      task = session?.downloadTask(withResumeData: data)
+      resumed = true
+    } else {
+      task = session?.downloadTask(with: remote)
+      resumed = false
+    }
+    task?.resume()
+    emit(["state": "start", "resumed": resumed])
+  }
+
+  func cancel() {
+    let name = fileName
+    task?.cancel(byProducingResumeData: { data in
+      if let data { try? data.write(to: BipModels.resumeURL(name)) }
+    })
+    task = nil
+  }
+
+  private func emit(_ payload: [String: Any]) {
+    onEvent?(payload)
+  }
+
+  func urlSession(
+    _ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64,
+    totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64
+  ) {
+    let now = CACurrentMediaTime()
+    if now - lastEmit < 0.5 { return }
+    lastEmit = now
+    emit(["state": "progress", "received": Double(totalBytesWritten), "total": Double(totalBytesExpectedToWrite)])
+  }
+
+  func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+    if let http = downloadTask.response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+      failure = "http \(http.statusCode)"
+      return
+    }
+    let destination = BipModels.folder.appendingPathComponent(fileName)
+    do {
+      try? FileManager.default.removeItem(at: destination)
+      try FileManager.default.moveItem(at: location, to: destination)
+      finishedPath = destination.path
+    } catch {
+      failure = "guardar: \(error.localizedDescription)"
+    }
+  }
+
+  func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+    self.task = nil
+    if let error = error as NSError? {
+      if let data = error.userInfo[NSURLSessionDownloadTaskResumeData] as? Data {
+        try? data.write(to: BipModels.resumeURL(fileName))
+      }
+      if error.code == NSURLErrorCancelled {
+        emit(["state": "paused"])
+      } else {
+        emit(["state": "error", "error": error.localizedDescription])
+      }
+      return
+    }
+    if let path = finishedPath {
+      try? FileManager.default.removeItem(at: BipModels.resumeURL(fileName))
+      emit(["state": "done", "path": path])
+    } else {
+      // una reanudacion caducada (enlace firmado viejo) se tira y se empieza de cero la proxima vez
+      try? FileManager.default.removeItem(at: BipModels.resumeURL(fileName))
+      emit(["state": "error", "error": failure ?? "desconocido"])
+    }
+  }
+}
+
+// MARK: - Memoria pequena (JSON con lo que Bip recuerda)
+
+enum BipStore {
+  static var folder: URL {
+    let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    let dir = base.appendingPathComponent("bip-memory", isDirectory: true)
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    return dir
+  }
+
+  static func read(_ name: String) -> String? {
+    try? String(contentsOf: folder.appendingPathComponent(BipModels.safeName(name)), encoding: .utf8)
+  }
+
+  static func write(_ name: String, _ text: String) {
+    try? text.write(to: folder.appendingPathComponent(BipModels.safeName(name)), atomically: true, encoding: .utf8)
   }
 }

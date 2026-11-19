@@ -1,9 +1,10 @@
-// Bip · fases 1, 2 y 3
+// Bip · fases 1 a 4
 //  - Cara: parpadea, mira a su alrededor y pita.
 //  - Ojos: te ve con la cámara frontal, te sigue con la mirada y te saluda.
 //  - Cuerpo: se asusta si lo mueves, ronronea con caricias, se duerme a oscuras
 //    y comenta cuando lo enchufas o lo desenchufas.
 //  - Oído: entiende frases sencillas en español, sin internet.
+//  - Mente: un modelo de lenguaje dentro del iPhone para charlar y tomar la iniciativa.
 // Toque corto: dice algo. Toque largo: se duerme o se despierta. Deslizar: caricia.
 import { StatusBar } from 'expo-status-bar';
 import * as Battery from 'expo-battery';
@@ -16,6 +17,8 @@ import { AppState, PanResponder, Platform, Pressable, StyleSheet, View } from 'r
 
 import BipSenses, { type HearingStart } from './modules/bip-senses';
 import { Instinct, type Buzz } from './src/brain/instinct';
+import { loadMemory } from './src/brain/memory';
+import { Mind } from './src/brain/mind';
 import { Face } from './src/face/Face';
 import { FaceEngine, type EmotionName } from './src/face/engine';
 import { speak } from './src/voice/speak';
@@ -71,10 +74,12 @@ function hearingProblem(r: HearingStart): string | null {
 export default function App() {
   useKeepAwake(); // la pantalla no se apaga mientras Bip está abierto
   const engine = useMemo(() => new FaceEngine(), []);
-  const instinct = useMemo(
-    () => new Instinct(engine, (emo, text, opts) => void speak(engine, text, emo, opts), buzz),
-    [engine],
-  );
+  const { mind, instinct } = useMemo(() => {
+    const memory = loadMemory();
+    const say = (emo: EmotionName, text: string, opts?: { subtitle?: boolean }) => void speak(engine, text, emo, opts);
+    const m = new Mind(engine, say, memory);
+    return { mind: m, instinct: new Instinct(engine, say, buzz, m, memory) };
+  }, [engine]);
   const line = useRef(0);
 
   // --------------------------------------------------- sentidos: ojos y oído
@@ -118,7 +123,12 @@ export default function App() {
       if (!r.camera) later(4200, () => speak(engine, 'No puedo verte: dame permiso de cámara en Ajustes.', 'triste'));
       const problem = hearingProblem(r.hearing);
       if (problem) later(r.camera ? 4200 : 8200, () => speak(engine, problem, 'triste'));
+      // la mente, cuando ya ha saludado y avisado de lo que falle
+      later(problem || !r.camera ? 12000 : 6000, () => mind.wake());
     })();
+
+    // cada pocos segundos, Bip piensa si le apetece decir algo
+    const thinkTimer = setInterval(() => instinct.tick(), 20_000);
 
     const appSub = AppState.addEventListener('change', (state) => {
       if (state === 'background') {
@@ -128,18 +138,21 @@ export default function App() {
         wentAway = false;
         updateIfAvailable();
         startSenses();
+        mind.wake(); // si estaba descargando el cerebro, continúa
       }
     });
 
     return () => {
       cancelled = true;
       timers.forEach(clearTimeout);
+      clearInterval(thinkTimer);
+      mind.stop();
       seeSub.remove();
       hearSub.remove();
       appSub.remove();
       stopSenses();
     };
-  }, [engine, instinct]);
+  }, [engine, instinct, mind]);
 
   // --------------------------------------------------- cuerpo: movimiento y batería
   useEffect(() => {

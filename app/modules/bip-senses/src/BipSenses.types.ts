@@ -34,7 +34,17 @@ export type HearingStart = {
   reason: string;
 };
 
+export type ModelEvent = {
+  state: 'start' | 'progress' | 'paused' | 'done' | 'error';
+  received?: number;
+  total?: number;
+  path?: string;
+  error?: string;
+  resumed?: boolean;
+};
+
 export type BipSensesEvents = {
   onSee: (event: SeeEvent) => void;
   onHear: (event: HearEvent) => void;
+  onModel: (event: ModelEvent) => void;
 };

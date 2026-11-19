@@ -1,8 +1,11 @@
 // Fase 2: el instinto. Recibe lo que notan los sentidos y decide reflejos:
 // seguirte con la mirada, saludar, asustarse, ronronear, dormirse a oscuras.
 // Fase 3: también decide cuándo contestar a lo que oye.
+// Fase 4: si la mente está lista, le pasa la conversación y le deja tomar la iniciativa.
 import BipSenses, { type HearEvent, type SeeEvent, type SeenFace } from '../../modules/bip-senses';
 import type { EmotionName, FaceEngine } from '../face/engine';
+import { learn, type Memory } from './memory';
+import type { Mind, Situation } from './mind';
 import { greeting, mentionsName, understand } from './talk';
 
 export type Say = (emo: EmotionName, text: string, opts?: { subtitle?: boolean }) => void;
@@ -19,6 +22,11 @@ const BRIGHT = 0.0; // brillo por encima = hay luz
 const DARK_SECONDS = 12;
 const GREET_AFTER_MS = 90_000; // vuelve a saludar si llevabas este rato sin aparecer
 const SHAKE = 3.0; // m/s² de aceleración para asustarse
+const CONVERSATION_MS = 12_000; // tras contestar, lo siguiente que oiga se toma como respuesta
+// iniciativa propia: solo si estás delante, hay silencio y ha pasado un buen rato
+const MUSE_MIN_PRESENT_MS = 2 * 60_000;
+const MUSE_SILENCE_MS = 4 * 60_000;
+const MUSE_EVERY_MS = 8 * 60_000;
 
 function largest(faces: SeenFace[]) {
   let best: SeenFace | null = null;
@@ -38,13 +46,36 @@ export class Instinct {
   private battery: number | null = null;
   private caresses = 0;
   private lastTouch = 0;
+  private lastTalkAt = 0;
+  private lastReplyAt = 0;
+  private presentSince = 0;
+  private lastMuseAt = 0;
+  private say: Say;
   lastLight: number | null = null;
 
   constructor(
     private engine: FaceEngine,
-    private say: Say,
+    say: Say,
     private buzz: Buzz,
-  ) {}
+    private mind: Mind,
+    private memory: Memory,
+  ) {
+    // apunta cuándo ha hablado por última vez (para saber si hay silencio)
+    this.say = (emo, text, opts) => {
+      this.lastTalkAt = performance.now();
+      say(emo, text, opts);
+    };
+  }
+
+  situation(): Situation {
+    return {
+      now: new Date(),
+      seesSomeone: this.seesSomeone,
+      attending: this.attending,
+      charging: this.battery === null ? null : this.battery === 2 || this.battery === 3,
+      dark: this.lastLight !== null && this.lastLight < DARK,
+    };
+  }
 
   get sleeping() {
     return this.engine.emotion === 'sueno';
@@ -92,6 +123,7 @@ export class Instinct {
       this.engine.setGaze(Math.max(-GAZE_X, Math.min(GAZE_X, gx)), Math.max(-GAZE_Y, Math.min(GAZE_Y, gy)));
       this.looking = Math.abs(face.yaw ?? 0) < LOOKING_YAW;
       const absent = this.lastFaceAt ? now - this.lastFaceAt : Infinity;
+      if (absent > 5000) this.presentSince = now;
       this.lastFaceAt = now;
       if (!this.sleeping && absent > GREET_AFTER_MS && now - this.lastGreetAt > GREET_AFTER_MS) {
         this.lastGreetAt = now;
@@ -168,13 +200,17 @@ export class Instinct {
     if (e.error || !e.text) return;
     this.engine.markListening();
     if (!e.final) return;
-    this.engine.showHeard(e.text);
+    const text = e.text;
+    this.engine.showHeard(text);
+    this.lastTalkAt = performance.now();
 
-    const addressed = mentionsName(e.text) || this.attending;
-    const reply = understand(e.text, { sleeping: this.sleeping, now: new Date(), seesSomeone: this.seesSomeone });
+    const named = mentionsName(text);
+    const conversing = performance.now() - this.lastReplyAt < CONVERSATION_MS;
+    const addressed = named || this.attending || conversing;
+    const reply = understand(text, { sleeping: this.sleeping, now: new Date(), seesSomeone: this.seesSomeone });
 
     if (this.sleeping) {
-      if (reply?.action === 'wake' && (addressed || mentionsName(e.text))) this.wake(reply.text);
+      if (reply?.action === 'wake' && (addressed || named)) this.wake(reply.text);
       return;
     }
     if (!addressed) {
@@ -182,16 +218,60 @@ export class Instinct {
       if (Math.random() < 0.25) this.engine.setEmotion('curioso', 1500);
       return;
     }
-    if (!reply) {
-      this.say('curioso', 'Te he oído, pero aún no sé responder a eso.');
+
+    // 1) ¿le piden recordar algo? (tu nombre, "recuerda que...")
+    const learned = learn(this.memory, text);
+    if (learned) {
+      this.answer('contento', learned);
       return;
     }
-    if (reply.action === 'sleep') {
+    // 2) órdenes y datos exactos: los resuelven las reglas al momento
+    if (reply?.action === 'sleep') {
       this.sleep(reply.text);
       return;
     }
-    if (reply.action === 'love') this.buzz('soft');
+    if (reply && (reply.fast || reply.action === 'love')) {
+      if (reply.action === 'love') this.buzz('soft');
+      this.answer(reply.emo, reply.text);
+      return;
+    }
+    // 3) todo lo demás, a la mente (si ya la tiene)
+    if (this.mind.ready) {
+      if (!this.mind.thinking) this.thinkAbout(text);
+      return;
+    }
+    if (reply) {
+      this.answer(reply.emo, reply.text);
+    } else if (this.mind.state === 'descargando') {
+      this.answer('pensando', `Aún estoy descargando mi cerebro (${Math.round(this.mind.progress * 100)} %).`);
+    } else {
+      this.answer('curioso', 'Te he oído, pero aún no sé responder a eso.');
+    }
+  }
+
+  private answer(emo: EmotionName, text: string) {
     this.markGreeted();
-    this.say(reply.emo, reply.text);
+    this.lastReplyAt = performance.now();
+    this.say(emo, text);
+  }
+
+  private async thinkAbout(text: string) {
+    this.engine.setEmotion('pensando', 30_000); // puntitos mientras piensa
+    const t = await this.mind.think(text, this.situation(), this.memory);
+    if (this.sleeping) return;
+    if (t) this.answer(t.emo, t.text);
+    else this.answer('curioso', 'Mmm… se me ha ido el santo al cielo.');
+  }
+
+  /** Se llama cada pocos segundos: aquí Bip decide si toma la iniciativa. */
+  async tick() {
+    const now = performance.now();
+    if (!this.mind.ready || this.mind.thinking || this.sleeping || this.engine.busy) return;
+    if (!this.seesSomeone || now - this.presentSince < MUSE_MIN_PRESENT_MS) return;
+    if (now - this.lastTalkAt < MUSE_SILENCE_MS || now - this.lastMuseAt < MUSE_EVERY_MS) return;
+    this.lastMuseAt = now;
+    if (Math.random() > 0.5) return; // no siempre: que no sea pesado
+    const t = await this.mind.muse(this.situation(), this.memory);
+    if (t && !this.sleeping && this.seesSomeone) this.answer(t.emo, t.text);
   }
 }
