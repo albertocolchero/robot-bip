@@ -804,11 +804,14 @@ export class Instinct {
       // el dictado del iPhone está fallando: que se vea (y que lo diga, como mucho cada 10 minutos)
       this.hearing.errors++;
       this.hearing.lastError = e.error;
-      this.engine.showNotice(`No consigo oírte bien (${e.error})`, 10_000);
+      // el caso más típico: el dictado del iPhone está apagado (sin él, iOS no deja convertir la voz en texto)
+      const dictationOff = /siri|dictation|dictado/i.test(e.error);
+      const fix = 'Ajustes › General › Teclado › Activar Dictado';
+      this.engine.showNotice(dictationOff ? `No te oigo: el dictado del iPhone está apagado. Actívalo en ${fix}.` : `No consigo oírte bien (${e.error})`, 15_000);
       const now = performance.now();
       if (now - this.hearing.toldAt > 10 * 60_000 && !this.sleeping && !this.life.privateMode) {
         this.hearing.toldAt = now;
-        this.say('triste', 'Tengo problemas para oírte. Mira mis ajustes, en «Estado».');
+        this.say('triste', dictationOff ? `No puedo oírte: activa el dictado en ${fix}.` : 'Tengo problemas para oírte. Mira mis ajustes, en «Estado».');
       }
       return;
     }
@@ -1313,12 +1316,20 @@ export class Instinct {
       if (!streamer.started) this.answer('confundido', 'Mmm… se me ha ido el santo al cielo.');
       return;
     }
-    // la mente ha decidido jugar
-    if (t.accion && !this.games.playing) {
-      streamer.cancel();
-      const r = t.accion === 'juegos' ? this.games.menu() : this.games.start(t.accion as GameName);
-      if (r) this.answer(r.emo, r.text);
-      this.life.noteTalk(text, '(jugamos)');
+    // la mente ha decidido jugar. Solo se le hace caso si de verdad se ha hablado de jugar (tú, o él
+    // proponiéndolo justo antes): el modelo pequeño a veces lo marca sin venir a cuento.
+    const aboutPlaying = /\b(jug|jueg|partida|revancha)/.test(normalize(text)) || (!!asked && /\b(jug|jueg|partida|revancha)/.test(normalize(asked)));
+    if (t.accion && aboutPlaying && !this.games.playing) {
+      // primero termina lo que estaba diciendo, y luego el juego
+      if (!streamer.finish(t.emo, t.text)) this.answer(t.emo, t.text);
+      const wait = (speechSeconds(t.text, t.emo) + 0.8) * 1000;
+      const accion = t.accion;
+      setTimeout(() => {
+        if (this.games.playing || this.sleeping || this.life.privateMode) return;
+        const r = accion === 'juegos' ? this.games.menu() : this.games.start(accion as GameName);
+        if (r) this.answer(r.emo, r.text);
+      }, wait);
+      this.life.noteTalk(text, `${t.text} (jugamos)`);
       return;
     }
     if (!streamer.finish(t.emo, t.text)) this.answer(t.emo, t.text);
