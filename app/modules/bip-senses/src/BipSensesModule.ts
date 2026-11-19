@@ -1,6 +1,6 @@
 import { NativeModule, requireNativeModule } from 'expo';
 
-import type { BipSensesEvents, HearingStart, PermissionResult } from './BipSenses.types';
+import type { BipSensesEvents, HearingStart, IslandState, PermissionResult } from './BipSenses.types';
 
 declare class BipSensesModule extends NativeModule<BipSensesEvents> {
   requestPermissions(): Promise<PermissionResult>;
@@ -26,6 +26,9 @@ declare class BipSensesModule extends NativeModule<BipSensesEvents> {
   deleteModel(fileName: string): void;
   readText(name: string): string | null;
   writeText(name: string, text: string): void;
+  /** Enciende o actualiza el mini Bip de la Isla Dinámica. false si iOS no lo deja. */
+  islandShow(state: IslandState): boolean;
+  islandEnd(): void;
 }
 
 export default requireNativeModule<BipSensesModule>('BipSenses');

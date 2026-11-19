@@ -2,7 +2,7 @@
   "expo": {
     "name": "Bip",
     "slug": "bip",
-    "version": "1.4.0",
+    "version": "1.5.0",
     "orientation": "landscape",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -11,6 +11,7 @@
       "supportsTablet": false,
       "requireFullScreen": true,
       "bundleIdentifier": "com.albertocolchero.bip",
+      "appleTeamId": "494SLTV9SP",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "UIStatusBarHidden": true,
@@ -18,7 +19,8 @@
         "NSCameraUsageDescription": "Bip usa la cámara frontal para verte y seguirte con la mirada. Las imágenes no salen del iPhone.",
         "NSMicrophoneUsageDescription": "Bip usa el micrófono para oír lo que le dices. El sonido no sale del iPhone.",
         "NSSpeechRecognitionUsageDescription": "Bip convierte tu voz en texto dentro del iPhone para entenderte.",
-        "NSPhotoLibraryUsageDescription": "Bip no mira ni guarda tus fotos. Apple pide esta frase porque una de las piezas de la app sabe abrir la fototeca."
+        "NSPhotoLibraryUsageDescription": "Bip no mira ni guarda tus fotos. Apple pide esta frase porque una de las piezas de la app sabe abrir la fototeca.",
+        "NSSupportsLiveActivities": true
       },
       "runtimeVersion": {
         "policy": "appVersion"
@@ -68,7 +70,8 @@
           "forceCxx20": true,
           "enableOpenCLAndHexagon": false
         }
-      ]
+      ],
+      "@bacons/apple-targets"
     ],
     "extra": {
       "eas": {

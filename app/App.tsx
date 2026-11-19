@@ -23,7 +23,8 @@ import { Mind } from './src/brain/mind';
 import { setStorage } from './src/brain/store';
 import { Face } from './src/face/Face';
 import { FaceEngine, type EmotionName } from './src/face/engine';
-import { Settings, loadPrefs } from './src/face/Settings';
+import { loadPrefs } from './src/brain/prefs';
+import { Settings } from './src/face/Settings';
 import { hasTheme, loadTheme } from './src/face/theme';
 import { toneWav } from './src/voice/droidVoice';
 import { playWav } from './src/voice/player';
@@ -195,9 +196,11 @@ export default function App() {
     const appSub = AppState.addEventListener('change', (state) => {
       if (state === 'background') {
         wentAway = true;
+        instinct.island.away(); // se queda en pequeñito en la Isla Dinámica
         stopSenses();
       } else if (state === 'active' && wentAway) {
         wentAway = false;
+        instinct.island.sync(true);
         updateIfAvailable();
         if (!instinct.life.privateMode) startSenses();
         mind.wake(); // si estaba descargando el cerebro, continúa

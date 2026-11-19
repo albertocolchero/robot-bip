@@ -4,27 +4,18 @@ import { useEffect, useState } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import type { Instinct } from '../brain/instinct';
-import { readJSON, writeJSON } from '../brain/store';
+import { loadPrefs, savePrefs } from '../brain/prefs';
 import type { FaceEngine } from './engine';
 import { COLORS, EFFECTS, EFFECT_INFO, SHAPES, SHAPE_INFO, saveTheme, type ColorName, type ShapeName, type Theme } from './theme';
 
 const MONO = Platform.select({ ios: 'Menlo', default: 'monospace' });
-const PREFS_FILE = 'ajustes.json';
-
-export type Prefs = { volume: number };
-
-export function loadPrefs(): Prefs {
-  const p = readJSON<Partial<Prefs>>(PREFS_FILE);
-  const v = typeof p?.volume === 'number' ? p.volume : 1;
-  return { volume: Math.max(0.2, Math.min(1, v)) };
-}
-
-type Tab = 'color' | 'ojos' | 'efecto' | 'sonido' | 'personas' | 'estado';
+type Tab = 'color' | 'ojos' | 'efecto' | 'sonido' | 'isla' | 'personas' | 'estado';
 const TABS: [Tab, string][] = [
   ['color', 'Color'],
   ['ojos', 'Ojos'],
   ['efecto', 'Efecto'],
   ['sonido', 'Voz y silencio'],
+  ['isla', 'Mini Bip'],
   ['personas', 'Personas'],
   ['estado', 'Estado'],
 ];
@@ -50,7 +41,12 @@ function applyTheme(engine: FaceEngine, t: Theme) {
 
 function applyVolume(instinct: Instinct, v: number) {
   instinct.life.baseVolume = v;
-  writeJSON(PREFS_FILE, { volume: v });
+  savePrefs({ volume: v });
+}
+
+function applyIsland(instinct: Instinct, on: boolean) {
+  instinct.island.setEnabled(on);
+  savePrefs({ island: on });
 }
 
 function liftFace(engine: FaceEngine, by: number) {
@@ -62,6 +58,7 @@ export function Settings({ engine, instinct, first, onClose, onPreviewVoice }: P
   const [theme, setThemeState] = useState<Theme>({ ...engine.theme });
   const [volume, setVolume] = useState(instinct.life.baseVolume);
   const [quiet, setQuiet] = useState({ ...instinct.life.journal.settings });
+  const [island, setIsland] = useState(() => loadPrefs().island);
   const [, setVersion] = useState(0);
   const [confirming, setConfirming] = useState<string | null>(null);
   const accent = COLORS[theme.color];
@@ -99,7 +96,7 @@ export function Settings({ engine, instinct, first, onClose, onPreviewVoice }: P
 
   const close = () => {
     saveTheme(engine.theme);
-    writeJSON(PREFS_FILE, { volume });
+    savePrefs({ volume });
     onClose();
   };
 
@@ -197,6 +194,31 @@ export function Settings({ engine, instinct, first, onClose, onPreviewVoice }: P
                 <Text style={[styles.value, { color: accent }]}>{hour(quiet.quietTo)}</Text>
               </Stepper>
             </View>
+          </>
+        )}
+
+        {tab === 'isla' && (
+          <>
+            <Pressable
+              onPress={() => {
+                setIsland(!island);
+                applyIsland(instinct, !island);
+              }}
+              style={styles.toggleRow}
+            >
+              <View style={[styles.toggle, island && { backgroundColor: accent, borderColor: accent }]}>
+                <View style={[styles.knob, island && styles.knobOn]} />
+              </View>
+              <Text style={styles.label}>Mini Bip fuera de la app</Text>
+            </Pressable>
+            <Text style={styles.label}>
+              Cuando sales de la app, Bip se queda en pequeñito: en la Isla Dinámica (iPhone 14 Pro, 15 y siguientes) y en la pantalla de bloqueo. Enseña su
+              cara, la cuenta atrás de tus temporizadores y lo último que te dijo. Tócalo para volver.
+            </Text>
+            <Text style={styles.dim}>
+              Fuera de la app no te ve ni te oye (iOS no deja usar la cámara ni el micrófono en segundo plano).
+              {instinct.island.ok ? '' : ' Ahora mismo iOS no lo deja: mira Ajustes del iPhone › Bip › Actividades en directo.'}
+            </Text>
           </>
         )}
 

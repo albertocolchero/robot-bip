@@ -6,6 +6,7 @@
 //    (Vision de Apple) y el volumen del sonido (para palmadas y musica).
 //  - Para distinguir personas: una "huella" de cada cara (Vision) y las proporciones de la cara
 //    (MediaPipe). Y ve perros y gatos (Vision). Nada sale del iPhone.
+import ActivityKit
 import AVFoundation
 import ExpoModulesCore
 import ImageIO
@@ -124,6 +125,59 @@ public class BipSensesModule: Module {
 
     Function("writeText") { (name: String, text: String) in
       BipStore.write(name, text)
+    }
+
+    // --- Mini Bip fuera de la app (Isla Dinámica y pantalla de bloqueo)
+    Function("islandShow") { (state: [String: Any]) -> Bool in
+      if #available(iOS 16.2, *) { return BipIsland.show(state) }
+      return false
+    }
+
+    Function("islandEnd") {
+      if #available(iOS 16.2, *) { BipIsland.end() }
+    }
+  }
+}
+
+// MARK: - Mini Bip (Actividad en directo)
+
+@available(iOS 16.2, *)
+enum BipIsland {
+  private static func number(_ v: Any?) -> Double {
+    if let n = v as? NSNumber { return n.doubleValue }
+    if let d = v as? Double { return d }
+    return 0
+  }
+
+  private static func state(_ d: [String: Any]) -> BipActivityAttributes.ContentState {
+    BipActivityAttributes.ContentState(
+      emotion: d["emotion"] as? String ?? "neutral",
+      color: d["color"] as? String ?? "#4FE3C1",
+      line: d["line"] as? String ?? "",
+      timerEnd: number(d["timerEnd"]),
+      timerLabel: d["timerLabel"] as? String ?? ""
+    )
+  }
+
+  /// Enciende el mini Bip, o lo actualiza si ya estaba. false si iOS no lo deja (desactivado en Ajustes).
+  static func show(_ d: [String: Any]) -> Bool {
+    guard ActivityAuthorizationInfo().areActivitiesEnabled else { return false }
+    let content = ActivityContent(state: state(d), staleDate: Date().addingTimeInterval(8 * 3600))
+    if let current = Activity<BipActivityAttributes>.activities.first {
+      Task { await current.update(content) }
+      return true
+    }
+    do {
+      _ = try Activity<BipActivityAttributes>.request(attributes: BipActivityAttributes(name: "Bip"), content: content, pushType: nil)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  static func end() {
+    for activity in Activity<BipActivityAttributes>.activities {
+      Task { await activity.end(nil, dismissalPolicy: .immediate) }
     }
   }
 }

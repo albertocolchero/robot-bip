@@ -96,6 +96,17 @@ export type ModelEvent = {
   resumed?: boolean;
 };
 
+/** Lo que se le cuenta al mini Bip (Isla Dinámica). Igual que BipActivityAttributes.ContentState en Swift. */
+export type IslandState = {
+  emotion: string;
+  /** "#4FE3C1" */
+  color: string;
+  line: string;
+  /** Segundos desde 1970 (0 = sin temporizador). */
+  timerEnd: number;
+  timerLabel: string;
+};
+
 export type BipSensesEvents = {
   onSee: (event: SeeEvent) => void;
   onHear: (event: HearEvent) => void;

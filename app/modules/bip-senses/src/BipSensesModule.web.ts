@@ -8,7 +8,7 @@
 //  - Voz: reproduce el WAV con el reproductor del navegador.
 import { NativeModule, registerWebModule } from 'expo';
 
-import type { BipSensesEvents, Expression, HandGesture, HearingStart, PermissionResult } from './BipSenses.types';
+import type { BipSensesEvents, Expression, HandGesture, HearingStart, IslandState, PermissionResult } from './BipSenses.types';
 
 declare global {
   interface Window {
@@ -230,6 +230,16 @@ class BipSensesModule extends NativeModule<BipSensesEvents> {
     } catch {
       // sin almacenamiento en este navegador
     }
+  }
+
+  // El navegador no tiene Isla Dinámica: se guarda lo último para poder mirarlo (window.bipIsla)
+  islandShow(state: IslandState): boolean {
+    (window as unknown as { bipIsla?: IslandState | null }).bipIsla = state;
+    return true;
+  }
+
+  islandEnd() {
+    (window as unknown as { bipIsla?: IslandState | null }).bipIsla = null;
   }
 }
 

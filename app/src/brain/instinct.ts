@@ -13,12 +13,14 @@ import { saveTheme, themeCommand } from '../face/theme';
 import { speechSeconds } from '../voice/speak';
 import { dayKey, hhmm, spokenDay } from './dates';
 import { GAME_LIST, Games, type GameName } from './games';
+import { Island } from './island';
 import { Life } from './life';
 import { learn, nameFrom, saveMemory, type Memory } from './memory';
 import type { Mind, Situation } from './mind';
 import { geocode, headlines, sayWeather, search, tidy, weather, type Place, type Weather } from './net';
 import { People, type Person, type WhoEvent } from './people';
 import { Perception, type PerceptionEvent } from './perception';
+import { loadPrefs } from './prefs';
 import { readJSON, writeJSON } from './store';
 import { isNo, isYes, mentionsName, normalize, understand } from './talk';
 import { clockText, parseTimer, sayDuration, Timers, type Timer } from './timers';
@@ -132,6 +134,8 @@ export class Instinct {
   readonly perception: Perception;
   readonly people: People;
   readonly timers = new Timers();
+  /** El mini Bip de la Isla Dinámica. */
+  readonly island: Island;
   /** Abre el panel de ajustes (lo conecta App). */
   onSettings: (() => void) | null = null;
   /** El panel de ajustes está abierto: no pregunta nombres ni toma la iniciativa. */
@@ -217,6 +221,7 @@ export class Instinct {
     this.buzz = d.buzz;
     this.sayRaw = d.say;
     this.people = new People(d.memory.name);
+    this.island = new Island(d.engine, this.timers, loadPrefs().island);
 
     this.life = new Life({
       now: () => Date.now(),
@@ -1354,6 +1359,7 @@ export class Instinct {
       if (fresh.length) this.ring(fresh);
     }
     this.ringStep(now);
+    this.island.sync();
     const next = this.timers.next();
     this.engine.timerText = next && next.at - Date.now() < 3_600_000 ? clockText(next.at - Date.now()) : null;
     // no te ha contestado a "¿cómo te llamas?": si pasa dos veces, deja de preguntar un par de horas
