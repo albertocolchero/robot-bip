@@ -65,10 +65,17 @@ export type HearEvent = {
   text?: string;
   final?: boolean;
   error?: string;
-  /** Qué oído usa: "nuevo" (el de iOS 26) o "clasico" (el de siempre), y por qué no el nuevo. */
-  engine?: 'nuevo' | 'clasico';
+  /** Qué oído usa: "nuevo" (el de iOS 26), "clasico" (el de siempre) o "whisper", y por qué no el nuevo. */
+  engine?: 'nuevo' | 'clasico' | 'whisper';
   reason?: string;
+  /** Oído Whisper: empiezas a hablar. */
+  voice?: boolean;
+  /** Oído Whisper: una frase entera grabada (ruta del WAV) y cuánto dura. */
+  audio?: string;
+  secs?: number;
 };
+
+export type HearingEngine = 'apple-nuevo' | 'apple' | 'whisper';
 
 /** Volumen de lo que suena, cada décima de segundo. */
 export type SoundEvent = {

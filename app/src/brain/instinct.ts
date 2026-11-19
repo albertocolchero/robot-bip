@@ -22,11 +22,12 @@ import { Home, cleanUrl, loadHome, looksLikeHome, saveHome, type HomeConfig } fr
 import { Log } from './log';
 import { People, type Person, type WhoEvent } from './people';
 import { Perception, type PerceptionEvent } from './perception';
-import { loadPrefs } from './prefs';
+import { loadPrefs, savePrefs, type Ear } from './prefs';
 import { readJSON, writeJSON } from './store';
 import { StreamSpeech } from './streamSpeech';
 import { isNo, isYes, mentionsName, normalize, understand } from './talk';
 import { clockText, parseTimer, sayDuration, Timers, type Timer } from './timers';
+import { WHISPER_FILE, WHISPER_MB, WHISPER_URL, WhisperEar } from './whisper';
 
 export type Say = (emo: EmotionName, text: string, opts?: { subtitle?: boolean; volume?: number }) => void;
 export type Buzz = (kind: 'tick' | 'soft' | 'strong') => void;
@@ -140,6 +141,10 @@ export class Instinct {
   /** Lo que oye, decide y contesta (Ajustes › Registro), para poder mejorarle. */
   readonly log = new Log();
   private lastLoggedError = { text: '', at: 0 };
+  /** El oído Whisper (si lo eliges en Ajustes › Sonido): convierte en texto las frases que graba el iPhone. */
+  readonly whisper = new WhisperEar();
+  /** Cómo va la descarga del modelo de Whisper (0..1), o null si no se está descargando. */
+  whisperProgress: number | null = null;
   /** La casa (Home Assistant), si la has conectado en Ajustes › Casa. */
   private home: Home | null = null;
   private homeNames: string[] = [];
@@ -280,6 +285,7 @@ export class Instinct {
     const homeCfg = loadHome();
     if (homeCfg) this.useHome(homeCfg);
     const prefs = loadPrefs();
+    this.prepareEar(prefs.ear);
     this.island = new Island(d.engine, this.timers, prefs.island);
     this.setBargeIn(prefs.interrupt);
 
@@ -324,6 +330,10 @@ export class Instinct {
       this.engine.say(`Buscando «${q}» en internet…`, null);
     };
     BipSenses.addListener('onModel', (e) => {
+      if (e.file === WHISPER_FILE) {
+        this.onWhisperDownload(e.state, e.received, e.total, e.path, e.error);
+        return;
+      }
       if (e.file !== FACE_FILE) return;
       if (e.state === 'done' && e.path) void this.loadReader(e.path);
       if (e.state === 'error') this.readerState = 'error';
@@ -841,7 +851,12 @@ export class Instinct {
   onHear(e: HearEvent) {
     // qué oído usa (el nuevo de Apple, o el de siempre si este iPhone no puede)
     if (e.engine) {
-      this.hearing.engine = e.engine === 'nuevo' ? 'el nuevo de Apple (iOS 26)' : `el de siempre${e.reason ? ` (${e.reason})` : ''}`;
+      this.hearing.engine =
+        e.engine === 'nuevo'
+          ? 'el nuevo de Apple (iOS 26)'
+          : e.engine === 'whisper'
+            ? 'Whisper (de OpenAI, dentro del iPhone)'
+            : `el de siempre de Apple${e.reason ? ` (${e.reason})` : ''}`;
       this.log.add('oye', `oído: ${this.hearing.engine}`);
       return;
     }
@@ -864,6 +879,24 @@ export class Instinct {
       }
       return;
     }
+    // oído Whisper: empiezas a hablar (enciende la luz de «te estoy oyendo»)
+    if (e.voice) {
+      this.engine.markListening();
+      const at = performance.now();
+      this.lastWordsAt = at;
+      this.hearing.partials++;
+      if (!this.utteranceAt || at - this.lastPartialAt > 3000) {
+        this.utteranceAt = at;
+        this.utteranceDuringSpeech = this.engine.speech !== null;
+      }
+      this.lastPartialAt = at;
+      return;
+    }
+    // oído Whisper: una frase entera grabada; Whisper la escribe y sigue como cualquier frase oída
+    if (e.audio) {
+      void this.hearWithWhisper(e.audio, e.secs ?? 0);
+      return;
+    }
     if (!e.text) return;
     this.engine.markListening();
     const now = performance.now();
@@ -881,11 +914,13 @@ export class Instinct {
     }
     const speakingNow = this.engine.speech !== null;
     const duringSpeech = this.bargeIn && (speakingNow || this.utteranceDuringSpeech);
+    // cuánto ha tardado desde que notó que hablabas (para el registro: así se ve si el oído va lento)
+    const heardFor = this.utteranceAt ? ` · ${((now - this.utteranceAt) / 1000).toFixed(1)} s desde que empezó a oírte` : '';
     this.utteranceAt = 0;
     this.utteranceDuringSpeech = false;
     this.hearing.finals++;
     this.hearing.lastText = e.text;
-    this.log.add('oye', `«${e.text}»${speakingNow ? ' (mientras él hablaba)' : ''}`);
+    this.log.add('oye', `«${e.text}»${speakingNow ? ' (mientras él hablaba)' : ''}${heardFor}`);
     // si escucha mientras pita, el dictado a veces pega sus propios pitidos ("pi", "bip") delante de tu frase
     const text = duringSpeech ? e.text.replace(/^(?:\s*(?:bip|pip|vip|pi+|mm+|ah+)[\s,.!?…]*)+/i, '').trim() : e.text;
     const t = normalize(text);
@@ -1339,6 +1374,117 @@ export class Instinct {
     if (r.speakAt && now >= r.speakAt) {
       r.speakAt = 0;
       this.answerLines('emocionado', r.lines);
+    }
+  }
+
+  // ================================================================ el oído: cuál usar
+  /** El oído que tiene puesto el iPhone ahora (con Whisper elegido, el de Apple hasta que Whisper esté listo). */
+  private nativeEar: Ear = 'apple-nuevo';
+
+  /** Elige el oído antes de que el iPhone empiece a oír. Whisper solo si su modelo ya está en el iPhone. */
+  private prepareEar(ear: Ear) {
+    let native: Ear = ear;
+    if (ear === 'whisper') {
+      const path = BipSenses.modelPath(WHISPER_FILE);
+      if (path) void this.loadWhisper(path, false);
+      else {
+        native = 'apple-nuevo'; // mientras se descarga
+        this.downloadWhisper();
+      }
+    }
+    BipSenses.setHearingEngine?.(native);
+    this.nativeEar = native;
+  }
+
+  /** Cambia de oído (Ajustes › Sonido). Devuelve qué poner en el panel. */
+  setEar(ear: Ear): string {
+    savePrefs({ ear });
+    this.log.add('oye', `oído elegido: ${ear}`);
+    if (ear !== 'whisper') {
+      void this.whisper.release();
+      this.switchNativeEar(ear);
+      return ear === 'apple' ? 'Usando el oído de siempre de Apple.' : 'Usando el oído nuevo de Apple.';
+    }
+    const path = BipSenses.modelPath(WHISPER_FILE);
+    if (path) {
+      void this.loadWhisper(path, false);
+      return 'Cargando Whisper…';
+    }
+    this.downloadWhisper();
+    return `Descargando Whisper (${WHISPER_MB} MB, solo por WiFi). Mientras, sigue oyendo con el de Apple.`;
+  }
+
+  /** Cómo va el oído, en una frase (Ajustes › Sonido). */
+  earStatus(): string {
+    if (loadPrefs().ear !== 'whisper') return `Ahora: ${this.hearing.engine}.`;
+    if (this.whisperProgress !== null) return `Descargando Whisper: ${Math.round(this.whisperProgress * 100)} % (solo por WiFi). Mientras, oye con el de Apple.`;
+    if (this.whisper.state === 'cargando') return 'Cargando Whisper…';
+    if (this.whisper.state === 'error') return `Whisper no ha cargado (${this.whisper.error}). Sigue con el oído de Apple.`;
+    if (this.whisper.ready) return this.nativeEar === 'whisper' ? 'Usando Whisper.' : 'Whisper listo: cambiando de oído…';
+    return 'Whisper aún no está en el iPhone.';
+  }
+
+  private downloadWhisper() {
+    if (this.whisperProgress !== null) return;
+    this.whisperProgress = 0;
+    BipSenses.downloadModel(WHISPER_URL, WHISPER_FILE);
+  }
+
+  private onWhisperDownload(state: string, received?: number, total?: number, path?: string, error?: string) {
+    if (state === 'progress' && total) this.whisperProgress = (received ?? 0) / total;
+    if (state === 'done' && path) {
+      this.whisperProgress = null;
+      this.log.add('oye', 'Whisper descargado');
+      if (loadPrefs().ear === 'whisper') void this.loadWhisper(path, true);
+    }
+    if (state === 'error') {
+      this.whisperProgress = null;
+      this.log.add('fallo', `descarga de Whisper: ${error ?? 'error'}`);
+    }
+  }
+
+  private async loadWhisper(path: string, announce: boolean) {
+    const ok = await this.whisper.load(path);
+    this.log.add(ok ? 'oye' : 'fallo', ok ? 'Whisper cargado' : `Whisper no carga: ${this.whisper.error}`);
+    if (!ok) {
+      // sin Whisper, que siga oyendo con el de Apple
+      if (this.nativeEar === 'whisper') this.switchNativeEar('apple-nuevo');
+      return;
+    }
+    if (loadPrefs().ear !== 'whisper') return;
+    if (this.nativeEar !== 'whisper') this.switchNativeEar('whisper');
+    if (announce && !this.sleeping && !this.life.privateMode) this.answer('feliz', '¡Ya tengo el oído Whisper! Háblame y verás.');
+  }
+
+  /** Cambia el oído del iPhone y vuelve a empezar a oír para que se note. */
+  private switchNativeEar(ear: Ear) {
+    BipSenses.setHearingEngine?.(ear);
+    this.nativeEar = ear;
+    if (this.life?.privateMode) return; // ya empezará con este al salir del modo privado
+    this.d.senses(false);
+    setTimeout(() => this.d.senses(true), 600);
+  }
+
+  /** Whisper escribe una frase grabada; luego sigue como cualquier frase oída. */
+  private async hearWithWhisper(path: string, secs: number) {
+    if (!this.whisper.ready) {
+      this.log.add('ignora', 'una frase grabada, pero Whisper aún no está cargado');
+      return;
+    }
+    const t0 = performance.now();
+    this.engine.markListening();
+    try {
+      const text = await this.whisper.transcribe(path);
+      const took = ((performance.now() - t0) / 1000).toFixed(1);
+      if (!text) {
+        this.utteranceAt = 0;
+        this.log.add('ignora', `Whisper: no era voz (${secs.toFixed(1)} s de sonido, ${took} s)`);
+        return;
+      }
+      this.log.add('oye', `Whisper: ${took} s para escribir ${secs.toFixed(1)} s de voz`);
+      this.onHear({ text, final: true });
+    } catch (err) {
+      this.onHear({ error: `Whisper: ${(err as Error)?.message ?? err}` });
     }
   }
 

@@ -10,7 +10,14 @@ export type Prefs = {
   island: boolean;
   /** Se le puede interrumpir mientras habla (sigue escuchando mientras pita). */
   interrupt: boolean;
+  /** Qué oído usa: el nuevo de Apple (iOS 26), el de siempre de Apple, o Whisper (de OpenAI, dentro del iPhone). */
+  ear: Ear;
+  /** De vez en cuando hace un juego de luces o propone poner algo en la tele (si la casa está conectada). */
+  surprises: boolean;
 };
+
+export type Ear = 'apple-nuevo' | 'apple' | 'whisper';
+const EARS: Ear[] = ['apple-nuevo', 'apple', 'whisper'];
 
 export function loadPrefs(): Prefs {
   const p = readJSON<Partial<Prefs>>(FILE);
@@ -20,6 +27,8 @@ export function loadPrefs(): Prefs {
     island: typeof p?.island === 'boolean' ? p.island : true,
     // apagado de entrada: escuchar mientras pita puede hacer que se oiga a sí mismo (se activa en Ajustes)
     interrupt: typeof p?.interrupt === 'boolean' ? p.interrupt : false,
+    ear: p?.ear && EARS.includes(p.ear) ? p.ear : 'apple-nuevo',
+    surprises: typeof p?.surprises === 'boolean' ? p.surprises : true,
   };
 }
 

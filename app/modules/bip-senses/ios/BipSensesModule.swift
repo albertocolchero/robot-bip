@@ -91,6 +91,12 @@ public class BipSensesModule: Module {
       DispatchQueue.main.async { self.ears.setPaused(paused) }
     }
 
+    // Qué oído usar: "apple-nuevo" (el de iOS 26), "apple" (el de siempre) o "whisper" (graba cada frase
+    // para que la app se la pase a Whisper). Se aplica la próxima vez que empiece a oír.
+    Function("setHearingEngine") { (name: String) in
+      BipEars.setMode(name)
+    }
+
     AsyncFunction("playWav") { (base64: String, promise: Promise) in
       DispatchQueue.main.async {
         promise.resolve(self.voice.play(base64: base64))
@@ -566,6 +572,20 @@ final class BipEars {
   private var modern: AnyObject?
   private var modernReady = false
   private var localeId = "es-ES"
+  /// Oído Whisper: aquí solo se graba cada frase; la escribe Whisper en la app.
+  private var whisper: BipUtteranceRecorder?
+
+  private static let modeKey = "bip.oido"
+
+  /// "apple-nuevo" (de entrada), "apple" o "whisper". Se guarda en el iPhone.
+  static func setMode(_ name: String) {
+    UserDefaults.standard.set(name, forKey: modeKey)
+  }
+
+  static var mode: String {
+    let m = UserDefaults.standard.string(forKey: modeKey) ?? "apple-nuevo"
+    return ["apple-nuevo", "apple", "whisper"].contains(m) ? m : "apple-nuevo"
+  }
 
   /// Todo se llama en el hilo principal.
   func start(localeId: String, completion: (Bool, String?) -> Void) {
@@ -584,6 +604,25 @@ final class BipEars {
     }
     recognizer = rec
     self.localeId = localeId
+    let mode = BipEars.mode
+
+    // oído Whisper: aquí solo se nota cuándo hablas y se graba la frase
+    var recorder: BipUtteranceRecorder?
+    if mode == "whisper" {
+      let r = BipUtteranceRecorder()
+      r.onVoice = { [weak self] in
+        guard let self = self, self.running, !self.paused else { return }
+        self.onHear?(["voice": true])
+      }
+      r.onUtterance = { [weak self] path, seconds in
+        guard let self = self, self.running, !self.paused else { return }
+        self.onHear?(["audio": path, "secs": seconds])
+      }
+      recorder = r
+    }
+    lock.lock()
+    whisper = recorder
+    lock.unlock()
 
     do {
       try BipAudioSession.activate()
@@ -599,8 +638,12 @@ final class BipEars {
         let current = self.request
         let useModern = self.modernReady && !self.paused
         let modern = self.modern
+        let whisper = self.whisper
+        let isPaused = self.paused
         self.lock.unlock()
-        if useModern {
+        if let whisper {
+          whisper.feed(buffer, paused: isPaused)
+        } else if useModern {
           if #available(iOS 26.0, *), let m = modern as? BipModernEars { m.feed(buffer) }
         } else {
           current?.append(buffer)
@@ -614,14 +657,23 @@ final class BipEars {
     }
 
     running = true
+    if recorder != nil {
+      completion(true, nil)
+      onHear?(["engine": "whisper"])
+      return
+    }
     startTask()
     timer?.invalidate()
     timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
       self?.checkSilence()
     }
     completion(true, nil)
-    // mientras tanto, prepara el oído nuevo; si está listo, se cambia a él
-    if #available(iOS 26.0, *) { startModern() }
+    if mode == "apple-nuevo" {
+      // mientras tanto, prepara el oído nuevo; si está listo, se cambia a él
+      if #available(iOS 26.0, *) { startModern() }
+    } else {
+      onHear?(["engine": "clasico", "reason": "elegido en Ajustes"])
+    }
   }
 
   @available(iOS 26.0, *)
@@ -631,12 +683,17 @@ final class BipEars {
       guard let self = self, self.running, self.modernReady, !self.paused else { return }
       self.onHear?(["text": text, "final": isFinal])
     }
-    m.onFail = { [weak self] reason in
-      guard let self = self else { return }
+    m.onFail = { [weak self, weak m] reason in
+      guard let self = self, let m = m else { return }
       self.lock.lock()
-      self.modernReady = false
-      self.modern = nil
+      // solo si sigue siendo el oído en uso (no uno viejo de antes de apagar y encender)
+      let current = self.modern === m
+      if current {
+        self.modernReady = false
+        self.modern = nil
+      }
       self.lock.unlock()
+      guard current else { return }
       self.onHear?(["engine": "clasico", "reason": reason])
       self.startTask() // vuelve al oído de siempre
     }
@@ -644,16 +701,28 @@ final class BipEars {
     modern = m
     lock.unlock()
     let locale = localeId
-    Task { [weak self] in
+    Task(priority: .userInitiated) { [weak self] in
       let ok = await m.start(localeId: locale)
       await MainActor.run {
-        guard let self = self else { return }
-        guard ok, self.running else {
-          if !ok { self.onHear?(["engine": "clasico", "reason": m.lastProblem]) }
+        guard let self = self else {
+          m.stop()
+          return
+        }
+        self.lock.lock()
+        let current = self.modern === m
+        self.lock.unlock()
+        // mientras se preparaba, el oído se apagó (o se volvió a encender con otro): este ya no vale.
+        // (Antes se daba por bueno igualmente y, si el nuevo fallaba, Bip se quedaba sordo.)
+        guard current, self.running else {
+          m.stop()
+          return
+        }
+        guard ok else {
           self.lock.lock()
           self.modern = nil
           self.lock.unlock()
-          if ok { m.stop() }
+          m.stop()
+          self.onHear?(["engine": "clasico", "reason": m.lastProblem])
           return
         }
         self.lock.lock()
@@ -697,6 +766,7 @@ final class BipEars {
     let modern = self.modern
     self.modern = nil
     modernReady = false
+    whisper = nil
     lock.unlock()
     if #available(iOS 26.0, *), let m = modern as? BipModernEars { m.stop() }
     engine.inputNode.removeTap(onBus: 0)
@@ -708,7 +778,10 @@ final class BipEars {
     lock.lock()
     paused = value
     let modern = modernReady ? self.modern : nil
+    let usingWhisper = whisper != nil
     lock.unlock()
+    // Whisper: la grabadora ve "paused" en el siguiente trozo de audio y tira lo que tuviera a medias
+    if usingWhisper { return }
     if #available(iOS 26.0, *), let m = modern as? BipModernEars {
       // el oído nuevo sigue encendido: solo deja de recibir audio y tira lo que tuviera a medias
       if value { m.discard() }
@@ -728,7 +801,7 @@ final class BipEars {
   }
 
   private func startTask() {
-    guard running, !paused, !modernReady, let rec = recognizer else { return }
+    guard running, !paused, !modernReady, whisper == nil, let rec = recognizer else { return }
     cancelTask()
     let req = SFSpeechAudioBufferRecognitionRequest()
     req.shouldReportPartialResults = true

@@ -1,6 +1,6 @@
 import { NativeModule, requireNativeModule } from 'expo';
 
-import type { BipSensesEvents, HearingStart, IslandState, PermissionResult } from './BipSenses.types';
+import type { BipSensesEvents, HearingEngine, HearingStart, IslandState, PermissionResult } from './BipSenses.types';
 
 declare class BipSensesModule extends NativeModule<BipSensesEvents> {
   requestPermissions(): Promise<PermissionResult>;
@@ -14,6 +14,8 @@ declare class BipSensesModule extends NativeModule<BipSensesEvents> {
   startHearing(locale: string): Promise<HearingStart>;
   stopHearing(): void;
   setHearingPaused(paused: boolean): void;
+  /** Qué oído usar la próxima vez que empiece a oír: "apple-nuevo", "apple" o "whisper" (no existe antes de la 1.6.1). */
+  setHearingEngine?(name: HearingEngine): void;
   /** Reproduce un WAV en base64. Devuelve la duración en segundos (-1 si falla). */
   playWav(base64: string): Promise<number>;
   /** Corta lo que esté sonando (cuando le interrumpes). */

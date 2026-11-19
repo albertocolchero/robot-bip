@@ -6,7 +6,7 @@ import { Keyboard, Platform, Pressable, ScrollView, Share, StyleSheet, Text, Tex
 import { cleanUrl, loadHome } from '../brain/home';
 import type { Instinct } from '../brain/instinct';
 import { clockOf, type LogKind } from '../brain/log';
-import { loadPrefs, savePrefs } from '../brain/prefs';
+import { loadPrefs, savePrefs, type Ear } from '../brain/prefs';
 import type { FaceEngine } from './engine';
 import { COLORS, EFFECTS, EFFECT_INFO, SHAPES, SHAPE_INFO, saveTheme, type ColorName, type ShapeName, type Theme } from './theme';
 
@@ -70,6 +70,12 @@ function applyInterrupt(instinct: Instinct, on: boolean) {
   savePrefs({ interrupt: on });
 }
 
+const EARS: [Ear, string, string][] = [
+  ['apple-nuevo', 'Apple nuevo', 'El de iOS 26: escucha sin cortes y va soltando el texto mientras hablas.'],
+  ['apple', 'Apple de siempre', 'El dictado de toda la vida del iPhone. Rápido, pero se equivoca más.'],
+  ['whisper', 'Whisper', 'El de OpenAI, dentro del iPhone (sin internet). Escribe la frase cuando terminas de hablar. Se descarga una vez (190 MB, por WiFi).'],
+];
+
 function applyIsland(instinct: Instinct, on: boolean) {
   instinct.island.setEnabled(on);
   savePrefs({ island: on });
@@ -86,6 +92,8 @@ export function Settings({ engine, instinct, first, onClose, onPreviewVoice }: P
   const [quiet, setQuiet] = useState({ ...instinct.life.journal.settings });
   const [island, setIsland] = useState(() => loadPrefs().island);
   const [interrupt, setInterrupt] = useState(() => loadPrefs().interrupt);
+  const [ear, setEarState] = useState<Ear>(() => loadPrefs().ear);
+  const [earNote, setEarNote] = useState('');
   const [, setVersion] = useState(0);
   const [confirming, setConfirming] = useState<string | null>(null);
   const [homeUrl, setHomeUrl] = useState(() => loadHome()?.url ?? 'http://homeassistant.local:8123');
@@ -118,9 +126,9 @@ export function Settings({ engine, instinct, first, onClose, onPreviewVoice }: P
     };
   }, []);
 
-  // las pestañas «Estado» y «Registro» se actualizan cada segundo
+  // las pestañas «Estado», «Registro» y «Sonido» (cómo va el oído) se actualizan cada segundo
   useEffect(() => {
-    if (tab !== 'estado' && tab !== 'registro') return;
+    if (tab !== 'estado' && tab !== 'registro' && tab !== 'sonido') return;
     const id = setInterval(() => setVersion((v) => v + 1), 1000);
     return () => clearInterval(id);
   }, [tab]);
@@ -221,6 +229,24 @@ export function Settings({ engine, instinct, first, onClose, onPreviewVoice }: P
 
         {tab === 'sonido' && (
           <>
+            <Text style={styles.label}>Oído (con cuál te entiende)</Text>
+            <View style={styles.row}>
+              {EARS.map(([k, name]) => (
+                <Pressable
+                  key={k}
+                  onPress={() => {
+                    if (k === ear) return;
+                    setEarState(k);
+                    setEarNote(instinct.setEar(k));
+                  }}
+                  style={[styles.chip, ear === k && { borderColor: accent, backgroundColor: `${accent}22` }]}
+                >
+                  <Text style={[styles.chipText, ear === k && { color: accent }]}>{name}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <Text style={styles.dim}>{EARS.find(([k]) => k === ear)?.[2]}</Text>
+            <Text style={styles.label}>{instinct.earStatus() || earNote}</Text>
             <Pressable
               onPress={() => {
                 setInterrupt(!interrupt);

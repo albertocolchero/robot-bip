@@ -12,6 +12,7 @@ import { asksToPlay, offersToPlay } from '../src/brain/games';
 import { weatherQuestion } from '../src/brain/net';
 import { cleanUrl, looksLikeHome, rephrase } from '../src/brain/home';
 import { normalize } from '../src/brain/talk';
+import { cleanWhisper } from '../src/brain/whisperText';
 
 let fails = 0;
 function check(what: string, got: unknown, want: unknown) {
@@ -267,6 +268,15 @@ check('«para el robot» → a la base', rephrase(normalize('para el robot')), '
 check('«pon el robot a cargar» → a la base', rephrase(normalize('pon el robot a cargar')), 'manda el robot a la base');
 check('«apaga la tele» no se toca', rephrase(normalize('apaga la tele')), null);
 check('dirección sin http', cleanUrl('homeassistant.local:8123/'), 'http://homeassistant.local:8123');
+
+// ---------------------------------------------------------------- oído Whisper: limpiar lo que escribe
+check('frase normal', cleanWhisper(' ¿Qué hora es? '), '¿Qué hora es?');
+check('sin [Música]', cleanWhisper('[Música] Hola, Bip.'), 'Hola, Bip.');
+check('solo ruido', cleanWhisper('[Música]'), '');
+check('coletilla de Amara', cleanWhisper('Subtítulos realizados por la comunidad de Amara.org'), '');
+check('coletilla de YouTube', cleanWhisper('¡Gracias por ver el vídeo!'), '');
+check('repite la pista', cleanWhisper('Hola, Bip. ¿Qué tal estás? Hablamos en castellano.'), '');
+check('solo puntos', cleanWhisper('...'), '');
 
 console.log(fails ? `\n${fails} comprobaciones han fallado.` : '\nTodo bien.');
 process.exit(fails ? 1 : 0);

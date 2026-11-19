@@ -51,8 +51,10 @@ final class BipModernEars: @unchecked Sendable {
     let transcriber = SpeechTranscriber(
       locale: locale,
       transcriptionOptions: [],
-      // textos provisionales mientras hablas (para no esperar), pero sin sacrificar acierto por rapidez
-      reportingOptions: [.volatileResults],
+      // lo que Apple usa para escuchar en directo (su ajuste «progressiveTranscription»): textos provisionales
+      // mientras hablas (volatileResults) y poco retraso (fastResults). Sin fastResults espera a tener un trozo
+      // grande de frase antes de soltar nada: en la 1.6.0 eso hacía que tardara muchísimo en entenderte.
+      reportingOptions: [.volatileResults, .fastResults],
       attributeOptions: []
     )
     do {
@@ -67,10 +69,17 @@ final class BipModernEars: @unchecked Sendable {
       lastProblem = "no sabe en qué formato quiere el audio"
       return false
     }
-    let analyzer = SpeechAnalyzer(modules: [transcriber])
+    // prioridad alta (escuchar no puede esperar a la cámara ni al cerebro) y el modelo cargado mientras
+    // la app esté abierta (al despertarse vuelve a oír al momento)
+    let analyzer = SpeechAnalyzer(
+      modules: [transcriber],
+      options: SpeechAnalyzer.Options(priority: .userInitiated, modelRetention: .processLifetime)
+    )
     let (stream, continuation) = AsyncStream.makeStream(of: AnalyzerInput.self)
+    // que el primer trozo de audio no tenga que esperar a que se prepare
+    try? await analyzer.prepareToAnalyze(in: analyzerFormat)
 
-    resultsTask = Task { [weak self] in
+    resultsTask = Task(priority: .userInitiated) { [weak self] in
       do {
         for try await result in transcriber.results {
           let text = String(result.text.characters)
@@ -78,6 +87,8 @@ final class BipModernEars: @unchecked Sendable {
           let end = CMTimeRangeGetEnd(result.range)
           await MainActor.run { self?.received(text: text, isFinal: isFinal, end: end) }
         }
+        // se ha terminado sin avisar de ningún fallo: así no oiría nada, mejor volver al oído de siempre
+        await MainActor.run { self?.fail("se ha terminado solo") }
       } catch {
         let reason = error.localizedDescription
         await MainActor.run { self?.fail("se ha parado (\(reason))") }
@@ -178,7 +189,7 @@ final class BipModernEars: @unchecked Sendable {
     if CACurrentMediaTime() - lastChange < (ended ? 0.55 : 0.75) { return }
     closing = true
     let analyzer = currentAnalyzer()
-    Task { [weak self] in
+    Task(priority: .userInitiated) { [weak self] in
       // que Apple dé por buena la frase hasta aquí, y un momento para que lleguen esos resultados
       try? await analyzer?.finalize(through: nil)
       try? await Task.sleep(nanoseconds: 120_000_000)
