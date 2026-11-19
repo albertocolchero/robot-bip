@@ -18,7 +18,7 @@ import { Life } from './life';
 import { learn, nameFrom, saveMemory, type Memory } from './memory';
 import type { Mind, Situation } from './mind';
 import { geocode, headlines, sayWeather, search, tidy, weather, weatherQuestion, type Place, type Weather } from './net';
-import { Home, loadHome, looksLikeHome, saveHome, type HomeConfig } from './home';
+import { Home, cleanUrl, loadHome, looksLikeHome, saveHome, type HomeConfig } from './home';
 import { Log } from './log';
 import { People, type Person, type WhoEvent } from './people';
 import { Perception, type PerceptionEvent } from './perception';
@@ -1362,6 +1362,32 @@ export class Instinct {
 
   get homeConnected() {
     return !!this.home;
+  }
+
+  /** Un enlace que abre Bip. El QR de la casa trae la dirección y la llave de Home Assistant:
+   *  com.albertocolchero.bip://casa?url=…&token=… (la llave no se apunta en el registro). */
+  async openLink(link: string) {
+    const m = link.match(/^[\w.+-]+:\/\/casa\/?\?(.+)$/);
+    if (!m) return;
+    const params: Record<string, string> = {};
+    for (const pair of m[1].split('&')) {
+      const [k, v = ''] = pair.split('=');
+      try {
+        params[decodeURIComponent(k)] = decodeURIComponent(v.replace(/\+/g, ' '));
+      } catch {
+        // un trozo mal escrito: se ignora
+      }
+    }
+    if (!params.url || !params.token) return;
+    this.engine.setEmotion('pensando', 8000);
+    const problem = await this.connectHome({ url: cleanUrl(params.url), token: params.token.trim() });
+    if (problem) {
+      this.answer('triste', `No he podido conectar con la casa: ${problem}.`);
+      return;
+    }
+    this.engine.hop(-0.8);
+    this.engine.burst('sparkle', 8);
+    this.answer('feliz', '¡Conectado con la casa! Prueba a preguntarme: «¿está encendida la tele?»');
   }
 
   private useHome(cfg: HomeConfig) {

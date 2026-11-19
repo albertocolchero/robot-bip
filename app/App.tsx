@@ -14,7 +14,7 @@ import { useKeepAwake } from 'expo-keep-awake';
 import { DeviceMotion } from 'expo-sensors';
 import * as Updates from 'expo-updates';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AppState, Dimensions, PanResponder, Platform, Pressable, StyleSheet, Text, View, type GestureResponderEvent } from 'react-native';
+import { AppState, Dimensions, Linking, PanResponder, Platform, Pressable, StyleSheet, Text, View, type GestureResponderEvent } from 'react-native';
 
 import BipSenses, { type HearingStart } from './modules/bip-senses';
 import { Instinct, type Buzz } from './src/brain/instinct';
@@ -239,6 +239,18 @@ export default function App() {
       motionSub.remove();
       batterySub.remove();
     };
+  }, [instinct]);
+
+  // --------------------------------------------------- enlaces: la llave de la casa llega escaneando un QR
+  useEffect(() => {
+    const open = (url?: string | null) => {
+      if (url) void instinct.openLink(url);
+    };
+    Linking.getInitialURL()
+      .then(open)
+      .catch(() => undefined);
+    const sub = Linking.addEventListener('url', (e) => open(e.url));
+    return () => sub.remove();
   }, [instinct]);
 
   // --------------------------------------------------- de vez en cuando cambia de gesto él solo (según su ánimo)
