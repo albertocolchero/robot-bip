@@ -51,8 +51,8 @@ const BRIGHT = 0.0; // brillo por encima = hay luz
 const DARK_SECONDS = 12;
 const GREET_AFTER_MS = 90_000; // vuelve a saludar si llevabas este rato sin aparecer
 const SHAKE = 3.0; // m/s² de aceleración para asustarse
-const CONVERSATION_MS = 7_000; // tras contestar, lo siguiente que oiga en este rato se toma como respuesta
-const ASKED_MS = 15_000; // y si lo que dijo era una pregunta, un poco más
+const CONVERSATION_MS = 25_000; // tras contestar, la charla sigue abierta este rato: no hace falta repetir «Bip»
+const ASKED_MS = 40_000; // y si lo que dijo era una pregunta, más
 const OFFER_MS = 40_000; // cuánto recuerda que te ha propuesto jugar
 const ASK_MS = 40_000; // cuánto espera a que le digas tu nombre
 const WHO_GAP_MS = 3 * 60_000; // como mucho una pregunta de "¿quién eres?" cada 3 minutos
@@ -177,6 +177,8 @@ export class Instinct {
   private missed: Timer[] = [];
   /** Lo que le dijiste mientras pensaba en otra cosa: te contesta en cuanto termine. */
   private waitingThought: { text: string; at: number } | null = null;
+  /** Te acabas de despedir ("adiós", "nada más"): tras contestar, cierra la charla. */
+  private closing = false;
   /** Cómo va el oído (para la pestaña «Estado» de los ajustes). */
   hearing = { partials: 0, finals: 0, ignored: 0, lastAt: 0, lastText: '', errors: 0, lastError: '', toldAt: -Infinity, level: 0, loudest: 0 };
 
@@ -315,6 +317,12 @@ export class Instinct {
 
   /** Tras hablar, lo siguiente que oiga en un ratito se toma como respuesta (más rato si ha preguntado). */
   private openConversation(lines: string[], emo: EmotionName) {
+    if (this.closing) {
+      // te has despedido: lo siguiente ya tiene que empezar por «Bip»
+      this.closing = false;
+      this.listenUntil = 0;
+      return;
+    }
     const total = lines.reduce((a, l) => a + speechSeconds(l, emo) + 1.4, 0);
     const asked = lines[lines.length - 1].includes('?');
     this.listenFor(total * 1000 + (asked ? ASKED_MS : CONVERSATION_MS));
@@ -778,17 +786,12 @@ export class Instinct {
       return;
     }
 
-    // ¿le hablan a él?
-    //  - si le llaman por su nombre, sí
-    //  - si estamos jugando, o acaba de hablar o de preguntar algo, sí (salvo que llames a otro por su nombre)
-    //  - si le miras y no hay nadie más delante, también
+    // ¿le hablan a él? Casi siempre: no hace falta decir «Bip» (mejor que se equivoque contestando
+    // de más que obligarte a llamarle). Solo se calla si empiezas o acabas la frase con el nombre de
+    // otra persona o de la mascota ("Toby, ven aquí", "¿qué quieres cenar, Ana?").
     const named = mentionsName(text);
     const toOther = !named && this.talkingToOther(t);
-    const waiting = !!this.asking || (!!this.offer && now - this.offer.at < OFFER_MS);
-    const conversing = now < this.listenUntil;
-    const alone = this.people.faceCount() < 2;
-    const facing = this.attending && alone && now - this.lookingSince > 600;
-    const addressed = named || this.games.playing || (!toOther && (conversing || waiting || facing));
+    const addressed = named || this.games.playing || !toOther;
     const reply = understand(text, { sleeping: this.sleeping, now: new Date(), seesSomeone: this.seesSomeone });
 
     if (this.sleeping) {
@@ -797,7 +800,7 @@ export class Instinct {
     }
     if (!addressed) {
       // no le hablan a él (por teléfono o con otra persona): no interrumpir, pero que se vea por qué
-      this.engine.showHeard(`${text}  · creo que no era para mí (llámame «Bip»)`);
+      this.engine.showHeard(`${text}  · creo que hablabas con otro (si era para mí, llámame «Bip»)`);
       this.hearing.ignored++;
       this.life.overheard();
       if (Math.random() < 0.25) this.engine.setEmotion('curioso', 1500);
@@ -806,6 +809,9 @@ export class Instinct {
     this.life.touchedTalk();
     // si le hablas mientras aún le quedaban frases por decir, se calla y te escucha
     this.life.cancelChain();
+    // la charla sigue abierta mientras le hables (aunque tarde en contestar); "adiós" o "nada más" la cierran
+    this.closing = /\b(adios|hasta luego|hasta manana|nada mas|eso es todo|ya esta|ya hemos terminado|luego hablamos|chao)\b/.test(t);
+    if (!this.closing) this.listenFor(CONVERSATION_MS);
 
     // 0) respuestas a lo que Bip acaba de preguntar: quién eres, cómo se llama tu perro, ¿jugamos?
     if (this.answerAsking(text, t, now)) return;
