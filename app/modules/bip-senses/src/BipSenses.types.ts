@@ -10,10 +10,40 @@ export type SeenFace = {
   yaw?: number;
 };
 
+/** Tu expresión, resumida de las 52 medidas de MediaPipe (cada una de 0 a 1). */
+export type Expression = {
+  smile: number;
+  frown: number;
+  browUp: number;
+  browDown: number;
+  jawOpen: number;
+  blinkL: number;
+  blinkR: number;
+  squint: number;
+  wide: number;
+  pucker: number;
+  puff: number;
+  sneer: number;
+  press: number;
+};
+
+export type HandGesture = 'palma' | 'puno' | 'paz' | 'pulgar' | 'senala' | 'otro';
+
+export type SeenHand = {
+  gesture: HandGesture;
+  /** Muñeca, 0..1 como en las caras. */
+  x: number;
+  y: number;
+  confidence: number;
+};
+
 export type SeeEvent = {
   faces: SeenFace[];
   /** Brillo de la escena (EXIF): negativo = oscuro, 5 o más = mucha luz. */
   light?: number;
+  /** Solo si el lector de caras está cargado y hay alguien cerca. */
+  expr?: Expression;
+  hand?: SeenHand;
   error?: string;
 };
 
@@ -21,6 +51,13 @@ export type HearEvent = {
   text?: string;
   final?: boolean;
   error?: string;
+};
+
+/** Volumen de lo que suena, cada décima de segundo. */
+export type SoundEvent = {
+  /** 0 = silencio … 1 = muy fuerte */
+  level: number;
+  db: number;
 };
 
 export type PermissionResult = {
@@ -36,6 +73,8 @@ export type HearingStart = {
 
 export type ModelEvent = {
   state: 'start' | 'progress' | 'paused' | 'done' | 'error';
+  /** De qué archivo es el aviso. */
+  file?: string;
   received?: number;
   total?: number;
   path?: string;
@@ -47,4 +86,5 @@ export type BipSensesEvents = {
   onSee: (event: SeeEvent) => void;
   onHear: (event: HearEvent) => void;
   onModel: (event: ModelEvent) => void;
+  onSound: (event: SoundEvent) => void;
 };

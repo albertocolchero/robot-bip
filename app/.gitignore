@@ -39,3 +39,6 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# motor de Skia para probar en el navegador (se copia de node_modules)
+public/canvaskit.wasm

@@ -13,15 +13,30 @@ interface VoiceStyle {
   end: number; // cómo acaba la frase (+ sube, - baja)
 }
 
-const VOICE: Record<EmotionName, VoiceStyle> = {
-  neutral: { base: 640, spread: 1.0, tempo: 92, wave: 'square', glide: 0.35, vib: 0, end: 0 },
+const NEUTRAL: VoiceStyle = { base: 640, spread: 1.0, tempo: 92, wave: 'square', glide: 0.35, vib: 0, end: 0 };
+
+const VOICE: Partial<Record<EmotionName, VoiceStyle>> = {
+  neutral: NEUTRAL,
   contento: { base: 860, spread: 1.35, tempo: 78, wave: 'square', glide: 0.55, vib: 0, end: 0.2 },
+  feliz: { base: 940, spread: 1.5, tempo: 70, wave: 'square', glide: 0.65, vib: 0, end: 0.35 },
   curioso: { base: 720, spread: 1.1, tempo: 98, wave: 'square', glide: 0.4, vib: 0, end: 0.6 },
   sorprendido: { base: 980, spread: 1.5, tempo: 84, wave: 'square', glide: 0.7, vib: 0, end: 0.4 },
   triste: { base: 400, spread: 0.7, tempo: 150, wave: 'triangle', glide: 0.6, vib: 6, end: -0.5 },
   pensando: { base: 560, spread: 0.8, tempo: 120, wave: 'triangle', glide: 0.3, vib: 9, end: 0 },
   sueno: { base: 300, spread: 0.5, tempo: 185, wave: 'triangle', glide: 0.5, vib: 4, end: -0.6 },
+  cansado: { base: 380, spread: 0.6, tempo: 160, wave: 'triangle', glide: 0.55, vib: 3, end: -0.45 },
+  enfadado: { base: 300, spread: 0.9, tempo: 72, wave: 'square', glide: 0.2, vib: 0, end: -0.3 },
+  asustado: { base: 1050, spread: 1.2, tempo: 62, wave: 'square', glide: 0.5, vib: 14, end: 0.3 },
+  enamorado: { base: 780, spread: 1.2, tempo: 110, wave: 'triangle', glide: 0.75, vib: 5, end: 0.3 },
+  mareado: { base: 520, spread: 1.6, tempo: 115, wave: 'triangle', glide: 0.9, vib: 8, end: -0.2 },
+  confundido: { base: 620, spread: 1.0, tempo: 105, wave: 'square', glide: 0.5, vib: 0, end: 0.7 },
+  aburrido: { base: 420, spread: 0.4, tempo: 140, wave: 'triangle', glide: 0.2, vib: 0, end: -0.3 },
+  avergonzado: { base: 700, spread: 0.8, tempo: 100, wave: 'triangle', glide: 0.4, vib: 4, end: -0.2 },
+  emocionado: { base: 1000, spread: 1.6, tempo: 64, wave: 'square', glide: 0.7, vib: 0, end: 0.5 },
+  privado: { base: 520, spread: 0.6, tempo: 110, wave: 'triangle', glide: 0.3, vib: 0, end: -0.2 },
 };
+
+const voiceOf = (emo: EmotionName) => VOICE[emo] ?? NEUTRAL;
 
 const SCALE = [0, 2, 4, 7, 9, 12, 14, 16];
 
@@ -53,7 +68,7 @@ function syllables(word: string) {
 }
 
 export function planSpeech(text: string, emo: EmotionName): SpeechPlan {
-  const v = VOICE[emo] ?? VOICE.neutral;
+  const v = voiceOf(emo);
   const clean = text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const tokens = clean.match(/[a-zñ0-9]+|[?!.,;:]/g) ?? [];
   const notes: Note[] = [];
@@ -99,8 +114,9 @@ export function planSpeech(text: string, emo: EmotionName): SpeechPlan {
 const SR = 22050;
 
 /** Convierte el plan de pitidos en un archivo WAV (16 bits, mono) en memoria. */
-export function synthesize(plan: SpeechPlan, emo: EmotionName): Uint8Array {
-  const v = VOICE[emo] ?? VOICE.neutral;
+/** volume: 1 normal, 0.3 bajito (de noche o si le han pedido silencio). */
+export function synthesize(plan: SpeechPlan, emo: EmotionName, volume = 1): Uint8Array {
+  const v = voiceOf(emo);
   const total = Math.ceil((plan.dur + 0.2) * SR);
   const buf = new Float32Array(total);
   for (const note of plan.notes) {
@@ -123,12 +139,25 @@ export function synthesize(plan: SpeechPlan, emo: EmotionName): Uint8Array {
   }
   // filtro paso bajo suave (quita aspereza) y volumen
   const a = 1 - Math.exp((-2 * Math.PI * 3200) / SR);
-  const gain = emo === 'sueno' ? 0.32 : 0.45;
+  const gain = (emo === 'sueno' || emo === 'cansado' ? 0.32 : 0.45) * Math.max(0, Math.min(1, volume));
   const pcm = new Int16Array(total);
   let y = 0;
   for (let i = 0; i < total; i++) {
     y += a * (buf[i] - y);
     pcm[i] = Math.max(-32767, Math.min(32767, Math.round(y * gain * 32767)));
+  }
+  return wav(pcm, SR);
+}
+
+/** Un tono puro (para el juego de Simón): frecuencia en Hz, duración en ms. */
+export function toneWav(freq: number, ms: number, volume = 1): Uint8Array {
+  const total = Math.ceil((ms / 1000) * SR);
+  const pcm = new Int16Array(total);
+  for (let i = 0; i < total; i++) {
+    const t = i / SR;
+    const env = Math.min(1, t / 0.01) * Math.min(1, (total - i) / (SR * 0.04));
+    const x = Math.sin(2 * Math.PI * freq * t) * 0.8 + Math.sin(4 * Math.PI * freq * t) * 0.15;
+    pcm[i] = Math.round(x * env * 0.4 * Math.max(0, Math.min(1, volume)) * 32767);
   }
   return wav(pcm, SR);
 }

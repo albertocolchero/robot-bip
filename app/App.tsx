@@ -1,11 +1,12 @@
-// Bip · fases 1 a 4
-//  - Cara: parpadea, mira a su alrededor y pita.
-//  - Ojos: te ve con la cámara frontal, te sigue con la mirada y te saluda.
-//  - Cuerpo: se asusta si lo mueves, ronronea con caricias, se duerme a oscuras
-//    y comenta cuando lo enchufas o lo desenchufas.
-//  - Oído: entiende frases sencillas en español, sin internet.
-//  - Mente: un modelo de lenguaje dentro del iPhone para charlar y tomar la iniciativa.
-// Toque corto: dice algo. Toque largo: se duerme o se despierta. Deslizar: caricia.
+// Bip · fases 1 a 5
+//  - Cara: ojos con párpados de verdad, 18 emociones, temas y efectos (Skia + shaders).
+//  - Ojos: te ve con la cámara frontal, te sigue con la mirada, lee tu expresión (MediaPipe)
+//    y tus gestos con la mano.
+//  - Cuerpo: se asusta si lo mueves, ronronea con caricias, se duerme a oscuras.
+//  - Oído: entiende frases en español sin internet; nota palmadas y música.
+//  - Mente: un modelo de lenguaje dentro del iPhone; busca en internet si le falta un dato.
+//  - Vida propia: ánimo, diario, recuerdos, iniciativa, normas de respeto y juegos.
+// Toque corto: dice algo (o juega). Toque largo: se duerme o se despierta. Deslizar: caricia.
 import { StatusBar } from 'expo-status-bar';
 import * as Battery from 'expo-battery';
 import * as Haptics from 'expo-haptics';
@@ -13,26 +14,33 @@ import { useKeepAwake } from 'expo-keep-awake';
 import { DeviceMotion } from 'expo-sensors';
 import * as Updates from 'expo-updates';
 import { useEffect, useMemo, useRef } from 'react';
-import { AppState, PanResponder, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { AppState, Dimensions, PanResponder, Platform, Pressable, StyleSheet, View, type GestureResponderEvent } from 'react-native';
 
 import BipSenses, { type HearingStart } from './modules/bip-senses';
 import { Instinct, type Buzz } from './src/brain/instinct';
 import { loadMemory } from './src/brain/memory';
 import { Mind } from './src/brain/mind';
+import { setStorage } from './src/brain/store';
 import { Face } from './src/face/Face';
 import { FaceEngine, type EmotionName } from './src/face/engine';
+import { loadTheme } from './src/face/theme';
+import { toneWav } from './src/voice/droidVoice';
+import { playWav } from './src/voice/player';
 import { speak } from './src/voice/speak';
+
+// los recuerdos de Bip se guardan dentro del iPhone
+setStorage(BipSenses);
 
 const TAP_LINES: [EmotionName, string][] = [
   ['contento', '¡Hola! Soy Bip.'],
   ['sorprendido', '¡Uy! ¿Me has tocado?'],
   ['curioso', 'Dime «hola, Bip».'],
-  ['contento', '¡Bip bip!'],
+  ['feliz', '¡Bip bip!'],
   ['pensando', 'Pregúntame la hora.'],
-  ['curioso', '¿Jugamos a algo?'],
+  ['emocionado', '¿Jugamos? Di «Bip, vamos a jugar».'],
+  ['curioso', 'Prueba: «Bip, ponte azul».'],
+  ['contento', 'Salúdame con la mano.'],
 ];
-
-const IDLE: EmotionName[] = ['curioso', 'pensando', 'contento', 'neutral'];
 
 const buzz: Buzz = (kind) => {
   if (Platform.OS === 'web') return;
@@ -42,6 +50,12 @@ const buzz: Buzz = (kind) => {
       : Haptics.impactAsync(kind === 'soft' ? Haptics.ImpactFeedbackStyle.Light : Haptics.ImpactFeedbackStyle.Heavy);
   done.catch(() => undefined);
 };
+
+/** Ancho de la pantalla en unidades lógicas (la pantalla mide 240 de alto). */
+function logicalWidth() {
+  const { width, height } = Dimensions.get('window');
+  return width / (height / 240);
+}
 
 /** Si hay una versión nueva de la app publicada por internet, la descarga y se reinicia. */
 async function updateIfAvailable() {
@@ -73,14 +87,32 @@ function hearingProblem(r: HearingStart): string | null {
 
 export default function App() {
   useKeepAwake(); // la pantalla no se apaga mientras Bip está abierto
-  const engine = useMemo(() => new FaceEngine(), []);
+  const engine = useMemo(() => {
+    const e = new FaceEngine();
+    e.theme = loadTheme();
+    const d = new Date();
+    if (d.getMonth() === 11 && d.getDate() >= 15) e.weather = 'snow'; // en Navidad, nieva
+    return e;
+  }, []);
+  const senses = useRef<(on: boolean) => void>(() => undefined);
   const { mind, instinct } = useMemo(() => {
     const memory = loadMemory();
-    const say = (emo: EmotionName, text: string, opts?: { subtitle?: boolean }) => void speak(engine, text, emo, opts);
-    const m = new Mind(engine, say, memory);
-    return { mind: m, instinct: new Instinct(engine, say, buzz, m, memory) };
+    const say = (emo: EmotionName, text: string, opts?: { subtitle?: boolean; volume?: number }) => void speak(engine, text, emo, opts);
+    const m = new Mind(engine, say);
+    const i: Instinct = new Instinct({
+      engine,
+      say,
+      buzz,
+      mind: m,
+      memory,
+      tone: (freq, ms) => void playWav(toneWav(freq, ms, i.life.volume())).catch(() => undefined),
+      senses: (on) => senses.current(on),
+      width: logicalWidth,
+    });
+    return { mind: m, instinct: i };
   }, [engine]);
   const line = useRef(0);
+  if (Platform.OS === 'web') (globalThis as unknown as { bip: object }).bip = { engine, mind, instinct };
 
   // --------------------------------------------------- sentidos: ojos y oído
   useEffect(() => {
@@ -92,6 +124,7 @@ export default function App() {
 
     const seeSub = BipSenses.addListener('onSee', (e) => instinct.onSee(e));
     const hearSub = BipSenses.addListener('onHear', (e) => instinct.onHear(e));
+    const soundSub = BipSenses.addListener('onSound', (e) => instinct.onSound(e));
 
     const startSenses = async () => {
       if (running) return null;
@@ -112,23 +145,32 @@ export default function App() {
       BipSenses.stopHearing();
     };
 
+    // el modo privado apaga y enciende cámara y micrófono
+    senses.current = (on) => {
+      if (on) void startSenses();
+      else stopSenses();
+    };
+
     (async () => {
       updateIfAvailable();
       const r = await startSenses();
       if (!r || cancelled) return;
       later(1200, () => {
         instinct.markGreeted();
-        speak(engine, '¡Hola! Soy Bip.', 'contento');
+        const lines = instinct.life.greeting(0);
+        speak(engine, lines[0], 'contento');
+        if (lines.length > 1) instinct.life.chain(lines.slice(1), 'curioso', 3.2);
       });
       if (!r.camera) later(4200, () => speak(engine, 'No puedo verte: dame permiso de cámara en Ajustes.', 'triste'));
       const problem = hearingProblem(r.hearing);
       if (problem) later(r.camera ? 4200 : 8200, () => speak(engine, problem, 'triste'));
       // la mente, cuando ya ha saludado y avisado de lo que falle
-      later(problem || !r.camera ? 12000 : 6000, () => mind.wake());
+      later(problem || !r.camera ? 12000 : 7000, () => mind.wake());
     })();
 
-    // cada pocos segundos, Bip piensa si le apetece decir algo
+    // cada pocos segundos, Bip repasa si le apetece hacer algo
     const thinkTimer = setInterval(() => instinct.tick(), 20_000);
+    const gameTimer = setInterval(() => instinct.fastTick(), 250);
 
     const appSub = AppState.addEventListener('change', (state) => {
       if (state === 'background') {
@@ -137,7 +179,7 @@ export default function App() {
       } else if (state === 'active' && wentAway) {
         wentAway = false;
         updateIfAvailable();
-        startSenses();
+        if (!instinct.life.privateMode) startSenses();
         mind.wake(); // si estaba descargando el cerebro, continúa
       }
     });
@@ -146,9 +188,11 @@ export default function App() {
       cancelled = true;
       timers.forEach(clearTimeout);
       clearInterval(thinkTimer);
+      clearInterval(gameTimer);
       mind.stop();
       seeSub.remove();
       hearSub.remove();
+      soundSub.remove();
       appSub.remove();
       stopSenses();
     };
@@ -172,14 +216,13 @@ export default function App() {
     };
   }, [instinct]);
 
-  // --------------------------------------------------- de vez en cuando cambia de gesto él solo
+  // --------------------------------------------------- de vez en cuando cambia de gesto él solo (según su ánimo)
   useEffect(() => {
     let idle: ReturnType<typeof setTimeout>;
     const tick = () => {
-      if (!engine.busy && !instinct.sleeping) {
-        engine.setEmotion(IDLE[Math.floor(Math.random() * IDLE.length)], 2500);
-      }
-      idle = setTimeout(tick, 8000 + Math.random() * 9000);
+      const face = instinct.idleFace();
+      if (face) engine.setEmotion(face, 2500);
+      idle = setTimeout(tick, 7000 + Math.random() * 9000);
     };
     idle = setTimeout(tick, 9000);
     return () => clearTimeout(idle);
@@ -191,7 +234,7 @@ export default function App() {
     let lastY = 0;
     let travelled = 0;
     return PanResponder.create({
-      onMoveShouldSetPanResponderCapture: (_e, g) => Math.abs(g.dx) + Math.abs(g.dy) > 14,
+      onMoveShouldSetPanResponderCapture: (_e, g) => !instinct.games.playing && Math.abs(g.dx) + Math.abs(g.dy) > 14,
       onPanResponderGrant: (_e, g) => {
         lastX = g.moveX || g.x0;
         lastY = g.moveY || g.y0;
@@ -213,18 +256,30 @@ export default function App() {
     });
   }, [instinct]);
 
-  const onPress = () => {
+  const onPress = (e: GestureResponderEvent) => {
+    // la cara ocupa toda la pantalla: la posición en pantalla vale (en el navegador no hay locationX)
+    const s = Dimensions.get('window').height / 240;
+    const x = e.nativeEvent.pageX ?? e.nativeEvent.locationX;
+    const y = e.nativeEvent.pageY ?? e.nativeEvent.locationY;
+    if (instinct.onTap(x / s, y / s)) {
+      buzz('tick');
+      return;
+    }
     buzz('soft');
     if (instinct.sleeping) {
       instinct.wake('¿Mmm? ¡Ah, hola!');
       return;
     }
     const [emo, text] = TAP_LINES[line.current++ % TAP_LINES.length];
-    speak(engine, text, emo);
+    speak(engine, text, emo, { volume: instinct.life.volume() });
   };
 
   const onLongPress = () => {
     buzz('strong');
+    if (instinct.life.privateMode) {
+      instinct.life.leavePrivate();
+      return;
+    }
     if (instinct.sleeping) instinct.wake();
     else instinct.sleep();
   };

@@ -12,6 +12,8 @@ Pod::Spec.new do |s|
   s.static_framework = true
 
   s.dependency 'ExpoModulesCore'
+  # Lector de expresiones de la cara (Google MediaPipe, funciona dentro del iPhone)
+  s.dependency 'MediaPipeTasksVision', '0.10.35'
 
   # Swift/Objective-C compatibility
   s.pod_target_xcconfig = {

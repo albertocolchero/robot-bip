@@ -1,8 +1,4 @@
-import { registerRootComponent } from 'expo';
+import { start } from './src/boot';
 
-import App from './App';
-
-// registerRootComponent calls AppRegistry.registerComponent('main', () => App);
-// It also ensures that whether you load the app in Expo Go or in a native build,
-// the environment is set up appropriately
-registerRootComponent(App);
+// En el iPhone registra la app directamente; en el navegador, primero carga Skia.
+start();

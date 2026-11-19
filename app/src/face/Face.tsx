@@ -1,13 +1,17 @@
-// Dibuja la cara de Bip con vistas normales de React Native (sin librerías extra).
+// La cara de Bip: un lienzo de Skia (ojos, brillos, efectos, partículas) y, encima,
+// los textos (subtítulos, lo que ha oído, avisos, juegos y partículas de letras).
 // Todo se calcula en "unidades lógicas": la pantalla mide 240 de alto.
-import { useEffect, useState } from 'react';
+import { Canvas, Picture } from '@shopify/react-native-skia';
+import { useEffect, useMemo, useState } from 'react';
 import { Platform, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 
+import { drawFace, eyeColor } from './draw';
 import { FaceEngine } from './engine';
 
-export const GLOW = '#4FE3C1';
-const BG = '#000000';
 const MONO = Platform.select({ ios: 'Menlo', default: 'monospace' });
+const TEXT_PARTICLES = { z: 'z', q: '?', ex: '!', note: '♪' } as const;
+
+const css = (c: number[], a = 1) => `rgba(${Math.round(c[0] * 255)},${Math.round(c[1] * 255)},${Math.round(c[2] * 255)},${a})`;
 
 export function Face({ engine }: { engine: FaceEngine }) {
   const { width: W, height: H } = useWindowDimensions();
@@ -26,126 +30,31 @@ export function Face({ engine }: { engine: FaceEngine }) {
     return () => cancelAnimationFrame(raf);
   }, [engine]);
 
+  const picture = useMemo(() => drawFace(engine, W, H, now), [engine, W, H, now]);
+
   const s = H / 240;
   const LW = W / s;
   const MX = LW / 2;
-  const p = engine.p;
-  const a = engine.amp(now);
-  const cy = 104 + p.dy + p.ly * 0.6 + engine.look[1] - a * 3;
-  const cx0 = MX + p.lx * 1.4 + engine.look[0] * 1.6;
-  const gap = Math.min(92, 54 * Math.max(1, LW / 320));
+  const color = eyeColor(engine);
+  const glow = css(color);
+  const texts: React.ReactNode[] = [];
 
-  const pieces: React.ReactNode[] = [];
-
-  ([-1, 1] as const).forEach((side) => {
-    let w = p.w;
-    let h = p.h * engine.blink;
-    if (p.asym) {
-      const k = side < 0 ? 1 + 0.14 * p.asym : 1 - 0.16 * p.asym;
-      w *= k;
-      h *= k;
-    }
-    h = Math.max(h, 3.5);
-    const cx = cx0 + side * gap;
-    const y0 = cy - h / 2;
-    const r = Math.min(p.r, h / 2, w / 2);
-
-    pieces.push(
-      <View
-        key={`eye${side}`}
-        style={[styles.eye, { left: (cx - w / 2) * s, top: y0 * s, width: w * s, height: h * s, borderRadius: r * s }]}
-      />,
+  // partículas de letras: z (dormido), ? (confundido), ! (sorprendido), ♪ (tarareando)
+  engine.particles.forEach((p, i) => {
+    if (!(p.kind in TEXT_PARTICLES)) return;
+    const k = p.age / p.life;
+    const o = Math.min(1, p.age * 4) * (1 - k);
+    const size = (p.kind === 'z' ? 15 : 20) * p.size;
+    texts.push(
+      <Text
+        key={`p${i}`}
+        style={[styles.particle, { color: glow, textShadowColor: glow, opacity: o, fontSize: size * s, left: (MX + p.x - size / 2) * s, top: (100 + p.y - size) * s }]}
+      >
+        {TEXT_PARTICLES[p.kind as keyof typeof TEXT_PARTICLES]}
+      </Text>,
     );
-
-    if (p.happy > 0.02) {
-      // ojos en arco: un óvalo negro tapa la parte de abajo
-      const ey = cy + h * (1.25 - 0.62 * p.happy);
-      const d = 1.6 * w;
-      pieces.push(
-        <View
-          key={`happy${side}`}
-          style={[
-            styles.mask,
-            {
-              left: (cx - d / 2) * s,
-              top: (ey - d / 2) * s,
-              width: d * s,
-              height: d * s,
-              borderRadius: (d / 2) * s,
-              transform: [{ scaleY: (1.24 * h) / d }],
-            },
-          ]}
-        />,
-      );
-    }
-
-    if (p.sad > 0.02) {
-      // párpado caído hacia fuera
-      const drop = 0.55 * h * p.sad;
-      const ang = Math.atan2(drop, w) * (side < 0 ? -1 : 1);
-      const lw = w * 2.2;
-      const lh = h * 1.5;
-      const mx = cx;
-      const my = y0 + drop / 2;
-      pieces.push(
-        <View
-          key={`sad${side}`}
-          style={[
-            styles.mask,
-            {
-              left: (mx - lw / 2) * s,
-              top: (my - lh) * s,
-              width: lw * s,
-              height: lh * s,
-              transform: [{ translateY: (lh / 2) * s }, { rotate: `${ang}rad` }, { translateY: (-lh / 2) * s }],
-            },
-          ]}
-        />,
-      );
-    }
-
-    if (p.asym > 0.5 && side > 0) {
-      pieces.push(
-        <View
-          key="lid"
-          style={[styles.mask, { left: (cx - w / 2 - 3) * s, top: (y0 - 3) * s, width: (w + 6) * s, height: (h * 0.22 + 3) * s }]}
-        />,
-      );
-    }
   });
 
-  if (p.think > 0.5) {
-    for (let i = 0; i < 3; i++) {
-      const o = 0.35 + 0.65 * Math.max(0, Math.sin(now / 380 - i * 0.7));
-      pieces.push(
-        <View
-          key={`dot${i}`}
-          style={[styles.dot, { opacity: o, left: (MX - 14 + i * 14 - 3.4) * s, top: (176 - 3.4) * s, width: 6.8 * s, height: 6.8 * s, borderRadius: 3.4 * s }]}
-        />,
-      );
-    }
-  }
-
-  if (p.sleep > 0.5) {
-    const t = (now / 1600) % 1;
-    const t2 = (t + 0.5) % 1;
-    const zx = MX + gap + 22;
-    pieces.push(
-      <Text key="z1" style={[styles.z, { fontSize: 16 * s, opacity: 1 - t, left: (zx + t * 14) * s, top: (70 - 16 - t * 26) * s }]}>z</Text>,
-      <Text key="z2" style={[styles.z, { fontSize: 16 * s, opacity: 1 - t2, left: (zx + 12 + t2 * 14) * s, top: (62 - 16 - t2 * 26) * s }]}>z</Text>,
-    );
-  }
-
-  if (a > 0.01) {
-    for (let i = 0; i < 9; i++) {
-      const hh = 2 + a * 14 * Math.abs(Math.sin(now / 55 + i * 1.3));
-      pieces.push(
-        <View key={`bar${i}`} style={[styles.bar, { left: (MX - 36 + i * 8.4) * s, top: (190 - hh / 2) * s, width: 4.4 * s, height: hh * s }]} />,
-      );
-    }
-  }
-
-  let subtitle: React.ReactNode = null;
   if (engine.subtitle && now < engine.subUntil) {
     let n = engine.subtitle.length;
     const sp = engine.speech;
@@ -154,72 +63,103 @@ export function Face({ engine }: { engine: FaceEngine }) {
       n = Math.max(0, Math.min(n, Math.ceil(k * n * 1.05)));
     }
     const fade = Math.min(1, (engine.subUntil - now) / 600);
-    subtitle = (
+    texts.push(
       <Text
-        style={[styles.sub, { opacity: fade, fontSize: 12.5 * s, lineHeight: 15 * s, top: 202 * s, left: (MX - 210) * s, width: 420 * s }]}
+        key="sub"
+        style={[styles.sub, { opacity: fade, fontSize: 12.5 * s, lineHeight: 15 * s, top: 204 * s, left: (MX - 230) * s, width: 460 * s }]}
         numberOfLines={2}
       >
         {engine.subtitle.slice(0, n)}
-      </Text>
+      </Text>,
     );
   }
 
-  // lucecita de "te escucho" y lo último que ha oído (arriba, pequeño)
-  if (now < engine.listeningUntil) {
-    const o = 0.5 + 0.5 * Math.abs(Math.sin(now / 160));
-    pieces.push(
-      <View key="ear" style={[styles.dot, styles.earDot, { opacity: o, left: (MX - 4) * s, top: 14 * s, width: 8 * s, height: 8 * s, borderRadius: 4 * s }]} />,
-    );
-  }
-  // barra de "descargando mi cerebro"
-  if (engine.progress !== null) {
-    const bw = 140;
-    pieces.push(
-      <View key="pbg" style={[styles.track, { left: (MX - bw / 2) * s, top: 230 * s, width: bw * s, height: 3 * s, borderRadius: 1.5 * s }]} />,
-      <View
-        key="pfg"
-        style={[styles.dot, { left: (MX - bw / 2) * s, top: 230 * s, width: bw * Math.max(0.02, engine.progress) * s, height: 3 * s, borderRadius: 1.5 * s }]}
-      />,
-    );
-  }
-  let heard: React.ReactNode = null;
   if (engine.heard && now < engine.heardUntil) {
     const fade = Math.min(1, (engine.heardUntil - now) / 600) * 0.6;
-    heard = (
+    texts.push(
       <Text
-        style={[styles.heard, { opacity: fade, fontSize: 10 * s, lineHeight: 12 * s, top: 26 * s, left: (MX - 200) * s, width: 400 * s }]}
+        key="heard"
+        style={[styles.heard, { opacity: fade, fontSize: 10 * s, lineHeight: 12 * s, top: 28 * s, left: (MX - 200) * s, width: 400 * s }]}
         numberOfLines={1}
       >
         «{engine.heard}»
-      </Text>
+      </Text>,
     );
+  }
+
+  if (engine.badge) {
+    texts.push(
+      <Text key="badge" style={[styles.badge, { color: glow, fontSize: 9 * s, top: 8 * s, left: 12 * s }]}>
+        {engine.badge}
+      </Text>,
+    );
+  }
+
+  const ov = engine.overlay;
+  if (ov) {
+    const padsOn = !!ov.pads;
+    if (ov.title) {
+      texts.push(
+        <Text key="ovt" style={[styles.ovTitle, { color: glow, fontSize: 11 * s, top: (padsOn ? 104 : 14) * s, left: (MX - 150) * s, width: 300 * s }]}>
+          {ov.title}
+        </Text>,
+      );
+    }
+    if (ov.score) {
+      texts.push(
+        <Text key="ovs" style={[styles.ovScore, { color: glow, fontSize: 10 * s, top: 14 * s, right: 14 * s }]}>
+          {ov.score}
+        </Text>,
+      );
+    }
+    if (ov.big) {
+      texts.push(
+        <Text key="ovb" style={[styles.ovBig, { color: glow, textShadowColor: glow, fontSize: 46 * s, top: 150 * s, left: (MX - 150) * s, width: 300 * s }]}>
+          {ov.big}
+        </Text>,
+      );
+    }
+    if (ov.left) {
+      texts.push(
+        <Text key="ovl" style={[styles.ovIcon, { fontSize: 44 * s, top: 66 * s, left: 14 * s, width: 90 * s }]}>
+          {ov.left}
+        </Text>,
+      );
+    }
+    if (ov.right) {
+      texts.push(
+        <Text key="ovr" style={[styles.ovIcon, { fontSize: 44 * s, top: 66 * s, right: 14 * s, width: 90 * s }]}>
+          {ov.right}
+        </Text>,
+      );
+    }
+    if (ov.hint) {
+      texts.push(
+        <Text key="ovh" style={[styles.heard, { opacity: 0.75, fontSize: 9.5 * s, top: (padsOn ? 120 : 222) * s, left: (MX - 200) * s, width: 400 * s }]}>
+          {ov.hint}
+        </Text>,
+      );
+    }
   }
 
   return (
     <View style={styles.root} pointerEvents="none">
-      {pieces}
-      {heard}
-      {subtitle}
+      <Canvas style={StyleSheet.absoluteFill}>
+        <Picture picture={picture} />
+      </Canvas>
+      {texts}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: BG, overflow: 'hidden' },
-  eye: {
-    position: 'absolute',
-    backgroundColor: GLOW,
-    shadowColor: GLOW,
-    shadowOpacity: 0.85,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 0 },
-  },
-  mask: { position: 'absolute', backgroundColor: BG },
-  dot: { position: 'absolute', backgroundColor: GLOW },
-  bar: { position: 'absolute', backgroundColor: GLOW, opacity: 0.85 },
-  z: { position: 'absolute', color: GLOW, fontWeight: '600' },
-  sub: { position: 'absolute', color: '#D8F7EE', textAlign: 'center', fontFamily: MONO },
+  root: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000', overflow: 'hidden' },
+  sub: { position: 'absolute', color: '#E2FAF3', textAlign: 'center', fontFamily: MONO },
   heard: { position: 'absolute', color: '#9FB8B0', textAlign: 'center', fontFamily: MONO },
-  track: { position: 'absolute', backgroundColor: '#123A33' },
-  earDot: { shadowColor: GLOW, shadowOpacity: 0.9, shadowRadius: 6, shadowOffset: { width: 0, height: 0 } },
+  badge: { position: 'absolute', fontFamily: MONO, opacity: 0.7, letterSpacing: 1 },
+  particle: { position: 'absolute', fontWeight: '700', textShadowRadius: 8, textShadowOffset: { width: 0, height: 0 } },
+  ovTitle: { position: 'absolute', textAlign: 'center', fontFamily: MONO, letterSpacing: 1 },
+  ovScore: { position: 'absolute', fontFamily: MONO },
+  ovBig: { position: 'absolute', textAlign: 'center', fontWeight: '800', fontFamily: MONO, textShadowRadius: 14, textShadowOffset: { width: 0, height: 0 } },
+  ovIcon: { position: 'absolute', textAlign: 'center' },
 });

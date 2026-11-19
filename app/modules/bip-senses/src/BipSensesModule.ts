@@ -7,6 +7,10 @@ declare class BipSensesModule extends NativeModule<BipSensesEvents> {
   startSeeing(): void;
   stopSeeing(): void;
   setSeeingInterval(seconds: number): void;
+  /** Carga el lector de expresiones (MediaPipe). true si ha ido bien. */
+  loadFaceReader(path: string): Promise<boolean>;
+  /** Más imágenes por segundo (para juegos como el duelo de miradas). */
+  setFastVision(fast: boolean): void;
   startHearing(locale: string): Promise<HearingStart>;
   stopHearing(): void;
   setHearingPaused(paused: boolean): void;

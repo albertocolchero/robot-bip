@@ -1,21 +1,49 @@
 // Versión de navegador, solo para probar en el PC:
 //  - Ojos: la "cara" es el puntero del ratón.
 //  - Oído: se simula escribiendo en la consola  window.bipOye('hola bip')
+//  - Expresión: window.bipCara({ smile: 0.9 })  (se queda puesta hasta window.bipCara(null))
+//  - Mano: window.bipMano('palma')  (o null para quitarla)
+//  - Sonido: window.bipSuena(0.9)  (un golpe de volumen, como una palmada)
 //  - Voz: reproduce el WAV con el reproductor del navegador.
 import { NativeModule, registerWebModule } from 'expo';
 
-import type { BipSensesEvents, HearingStart, PermissionResult } from './BipSenses.types';
+import type { BipSensesEvents, Expression, HandGesture, HearingStart, PermissionResult } from './BipSenses.types';
 
 declare global {
   interface Window {
     bipOye?: (text: string) => void;
+    bipCara?: (e: Partial<Expression> | null) => void;
+    bipMano?: (g: HandGesture | null) => void;
+    bipSuena?: (level: number) => void;
   }
 }
 
+const NEUTRAL: Expression = {
+  smile: 0.05,
+  frown: 0.02,
+  browUp: 0.05,
+  browDown: 0.05,
+  jawOpen: 0.02,
+  blinkL: 0.05,
+  blinkR: 0.05,
+  squint: 0.05,
+  wide: 0.05,
+  pucker: 0.02,
+  puff: 0.01,
+  sneer: 0.01,
+  press: 0.05,
+};
+
 class BipSensesModule extends NativeModule<BipSensesEvents> {
   private timer: ReturnType<typeof setInterval> | null = null;
+  private soundTimer: ReturnType<typeof setInterval> | null = null;
   private mouse: { x: number; y: number; inside: boolean } = { x: 0.5, y: 0.5, inside: false };
   private intervalMs = 125;
+  private fast = false;
+  private expr: Expression | null = null;
+  private faceReader = false;
+  private hand: HandGesture | null = null;
+  private soundLevel = 0.1;
   private audio: HTMLAudioElement | null = null;
   private onMove = (e: MouseEvent) => {
     this.mouse = { x: e.clientX / window.innerWidth, y: e.clientY / window.innerHeight, inside: true };
@@ -28,14 +56,25 @@ class BipSensesModule extends NativeModule<BipSensesEvents> {
     return { camera: true, microphone: true, speech: true };
   }
 
+  private beat() {
+    const faces = this.mouse.inside ? [{ x: this.mouse.x, y: this.mouse.y, size: 0.3, confidence: 1, yaw: 0 }] : [];
+    const event: Parameters<BipSensesEvents['onSee']>[0] = { faces, light: 4 };
+    if (faces.length && this.faceReader) event.expr = { ...NEUTRAL, ...(this.expr ?? {}) };
+    if (this.hand) event.hand = { gesture: this.hand, x: 0.5, y: 0.6, confidence: 0.9 };
+    this.emit('onSee', event);
+  }
+
   startSeeing() {
     if (this.timer) return;
     window.addEventListener('mousemove', this.onMove);
     document.addEventListener('mouseleave', this.onLeave);
-    this.timer = setInterval(() => {
-      const faces = this.mouse.inside ? [{ x: this.mouse.x, y: this.mouse.y, size: 0.3, confidence: 1, yaw: 0 }] : [];
-      this.emit('onSee', { faces, light: 4 });
-    }, this.intervalMs);
+    window.bipCara = (e) => {
+      this.expr = e ? { ...NEUTRAL, ...e } : null;
+    };
+    window.bipMano = (g) => {
+      this.hand = g;
+    };
+    this.timer = setInterval(() => this.beat(), this.fast ? 50 : this.intervalMs);
   }
 
   stopSeeing() {
@@ -53,13 +92,37 @@ class BipSensesModule extends NativeModule<BipSensesEvents> {
     }
   }
 
+  setFastVision(fast: boolean) {
+    this.fast = fast;
+    if (this.timer) {
+      this.stopSeeing();
+      this.startSeeing();
+    }
+  }
+
+  async loadFaceReader(_path: string): Promise<boolean> {
+    this.faceReader = true;
+    return true;
+  }
+
   async startHearing(_locale: string): Promise<HearingStart> {
     window.bipOye = (text: string) => this.emit('onHear', { text, final: true });
+    window.bipSuena = (level: number) => {
+      this.soundLevel = level;
+      setTimeout(() => {
+        this.soundLevel = 0.1;
+      }, 150);
+    };
+    if (!this.soundTimer) {
+      this.soundTimer = setInterval(() => this.emit('onSound', { level: this.soundLevel, db: this.soundLevel * 60 - 60 }), 100);
+    }
     return { ok: true, reason: '' };
   }
 
   stopHearing() {
     window.bipOye = undefined;
+    if (this.soundTimer) clearInterval(this.soundTimer);
+    this.soundTimer = null;
   }
 
   setHearingPaused(_paused: boolean) {}
@@ -72,8 +135,8 @@ class BipSensesModule extends NativeModule<BipSensesEvents> {
     return Number.isFinite(audio.duration) ? audio.duration : -1;
   }
 
-  // Cerebro simulado: la "descarga" tarda unos segundos y no baja nada.
-  private fakeDownload: ReturnType<typeof setInterval> | null = null;
+  // Descargas simuladas: tardan unos segundos y no bajan nada.
+  private fakeDownloads = new Map<string, ReturnType<typeof setInterval>>();
 
   modelPath(fileName: string): string | null {
     return this.readText(`modelo-${fileName}`) ? `web://${fileName}` : null;
@@ -84,24 +147,26 @@ class BipSensesModule extends NativeModule<BipSensesEvents> {
   }
 
   downloadModel(_url: string, fileName: string) {
-    if (this.fakeDownload) return;
-    const total = 3.11e9;
+    if (this.fakeDownloads.size) return; // como en el iPhone: una descarga cada vez
+    const total = fileName.endsWith('.task') ? 3.7e6 : 3.11e9;
     let received = 0;
-    this.emit('onModel', { state: 'start' });
-    this.fakeDownload = setInterval(() => {
+    this.emit('onModel', { state: 'start', file: fileName });
+    const timer = setInterval(() => {
       received = Math.min(total, received + total / 12);
-      this.emit('onModel', { state: 'progress', received, total });
+      this.emit('onModel', { state: 'progress', file: fileName, received, total });
       if (received >= total) {
-        this.cancelModelDownload();
+        clearInterval(timer);
+        this.fakeDownloads.delete(fileName);
         this.writeText(`modelo-${fileName}`, 'ok');
-        this.emit('onModel', { state: 'done', path: `web://${fileName}` });
+        this.emit('onModel', { state: 'done', file: fileName, path: `web://${fileName}` });
       }
     }, 500);
+    this.fakeDownloads.set(fileName, timer);
   }
 
   cancelModelDownload() {
-    if (this.fakeDownload) clearInterval(this.fakeDownload);
-    this.fakeDownload = null;
+    for (const t of this.fakeDownloads.values()) clearInterval(t);
+    this.fakeDownloads.clear();
   }
 
   deleteModel(fileName: string) {

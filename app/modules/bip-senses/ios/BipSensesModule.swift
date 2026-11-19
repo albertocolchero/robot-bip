@@ -2,9 +2,12 @@
 //  - Ojos: camara frontal + deteccion de caras de Apple (Vision) + medida de la luz.
 //  - Oido: reconocimiento de voz de Apple obligado a funcionar solo en el iPhone.
 //  - Voz: reproduce los pitidos (WAV) con el altavoz, compatible con estar escuchando.
+//  - Fase 5: lee tu expresion (MediaPipe, dentro del iPhone), tus gestos con la mano
+//    (Vision de Apple) y el volumen del sonido (para palmadas y musica).
 import AVFoundation
 import ExpoModulesCore
 import ImageIO
+import MediaPipeTasksVision
 import QuartzCore
 import Speech
 import UIKit
@@ -19,7 +22,7 @@ public class BipSensesModule: Module {
   public func definition() -> ModuleDefinition {
     Name("BipSenses")
 
-    Events("onSee", "onHear", "onModel")
+    Events("onSee", "onHear", "onModel", "onSound")
 
     OnCreate {
       self.eyes.onSee = { [weak self] payload in
@@ -27,6 +30,9 @@ public class BipSensesModule: Module {
       }
       self.ears.onHear = { [weak self] payload in
         self?.sendEvent("onHear", payload.mapValues { Optional($0) })
+      }
+      self.ears.onSound = { [weak self] payload in
+        self?.sendEvent("onSound", payload.mapValues { Optional($0) })
       }
       self.models.onEvent = { [weak self] payload in
         self?.sendEvent("onModel", payload.mapValues { Optional($0) })
@@ -54,6 +60,16 @@ public class BipSensesModule: Module {
 
     Function("setSeeingInterval") { (seconds: Double) in
       self.eyes.interval = max(0.05, seconds)
+    }
+
+    // Lector de expresiones (MediaPipe): el modelo se descarga una vez, como el cerebro
+    AsyncFunction("loadFaceReader") { (path: String, promise: Promise) in
+      self.eyes.loadFaceReader(path: path) { ok in promise.resolve(ok) }
+    }
+
+    // Vista rapida (para juegos): mas imagenes por segundo para no perderse un parpadeo
+    Function("setFastVision") { (fast: Bool) in
+      self.eyes.fast = fast
     }
 
     AsyncFunction("startHearing") { (locale: String, promise: Promise) in
@@ -164,6 +180,17 @@ final class BipEyes: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
   private let output = AVCaptureVideoDataOutput()
   private let queue = DispatchQueue(label: "bip.eyes")
   private let faceRequest = VNDetectFaceRectanglesRequest()
+  private let handRequest: VNDetectHumanHandPoseRequest = {
+    let r = VNDetectHumanHandPoseRequest()
+    r.maximumHandCount = 1
+    return r
+  }()
+  private var faceReader: FaceLandmarker?
+  private var lastExpr: CFTimeInterval = 0
+  private var lastHands: CFTimeInterval = 0
+  private var lastStamp = 0
+  /// En los juegos: mas imagenes por segundo.
+  var fast = false
   private var configured = false
   private var lastTime: CFTimeInterval = 0
   private var observer: NSObjectProtocol?
@@ -203,7 +230,8 @@ final class BipEyes: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     session.beginConfiguration()
     if session.canSetSessionPreset(.vga640x480) { session.sessionPreset = .vga640x480 }
     if session.canAddInput(input) { session.addInput(input) }
-    output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange]
+    // BGRA: lo entienden tanto Vision como MediaPipe
+    output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
     output.alwaysDiscardsLateVideoFrames = true
     output.setSampleBufferDelegate(self, queue: queue)
     if session.canAddOutput(output) { session.addOutput(output) }
@@ -228,9 +256,102 @@ final class BipEyes: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     }
   }
 
+  /// Carga el modelo de MediaPipe que lee la expresion de la cara (en el hilo de la camara).
+  func loadFaceReader(path: String, done: @escaping (Bool) -> Void) {
+    queue.async {
+      if self.faceReader != nil { done(true); return }
+      guard FileManager.default.fileExists(atPath: path) else { done(false); return }
+      let options = FaceLandmarkerOptions()
+      options.baseOptions.modelAssetPath = path
+      options.runningMode = .video
+      options.numFaces = 1
+      options.outputFaceBlendshapes = true
+      options.minFaceDetectionConfidence = 0.5
+      options.minFacePresenceConfidence = 0.5
+      options.minTrackingConfidence = 0.5
+      do {
+        self.faceReader = try FaceLandmarker(options: options)
+        done(true)
+      } catch {
+        done(false)
+      }
+    }
+  }
+
+  /// Lee la expresion: 52 medidas de la cara resumidas en unas pocas (sonrisa, cejas, boca...).
+  private func readExpression(_ sampleBuffer: CMSampleBuffer, now: CFTimeInterval) -> [String: Double]? {
+    guard let reader = faceReader else { return nil }
+    var stamp = Int(now * 1000)
+    if stamp <= lastStamp { stamp = lastStamp + 1 }
+    lastStamp = stamp
+    guard let image = try? MPImage(sampleBuffer: sampleBuffer, orientation: .up),
+          let result = try? reader.detect(videoFrame: image, timestampInMilliseconds: stamp),
+          let shapes = result.faceBlendshapes.first
+    else { return nil }
+    var b: [String: Double] = [:]
+    for c in shapes.categories {
+      if let name = c.categoryName { b[name] = Double(c.score) }
+    }
+    func g(_ k: String) -> Double { b[k] ?? 0 }
+    func avg(_ a: String, _ c: String) -> Double { (g(a) + g(c)) / 2 }
+    return [
+      "smile": avg("mouthSmileLeft", "mouthSmileRight"),
+      "frown": avg("mouthFrownLeft", "mouthFrownRight"),
+      "browUp": max(g("browInnerUp"), avg("browOuterUpLeft", "browOuterUpRight")),
+      "browDown": avg("browDownLeft", "browDownRight"),
+      "jawOpen": g("jawOpen"),
+      "blinkL": g("eyeBlinkLeft"),
+      "blinkR": g("eyeBlinkRight"),
+      "squint": avg("eyeSquintLeft", "eyeSquintRight"),
+      "wide": avg("eyeWideLeft", "eyeWideRight"),
+      "pucker": g("mouthPucker"),
+      "puff": g("cheekPuff"),
+      "sneer": avg("noseSneerLeft", "noseSneerRight"),
+      "press": avg("mouthPressLeft", "mouthPressRight"),
+    ]
+  }
+
+  /// Gesto de la mano: palma, puno, paz (tijera), pulgar arriba, senala u otro.
+  private func readHand(_ obs: VNHumanHandPoseObservation) -> [String: Any]? {
+    guard let pts = try? obs.recognizedPoints(.all) else { return nil }
+    func p(_ j: VNHumanHandPoseObservation.JointName) -> CGPoint? {
+      guard let r = pts[j], r.confidence > 0.3 else { return nil }
+      return r.location
+    }
+    guard let wrist = p(.wrist) else { return nil }
+    func d(_ a: CGPoint, _ b: CGPoint) -> CGFloat { hypot(a.x - b.x, a.y - b.y) }
+    func extended(_ tip: VNHumanHandPoseObservation.JointName, _ pip: VNHumanHandPoseObservation.JointName) -> Bool {
+      guard let t = p(tip), let q = p(pip) else { return false }
+      return d(t, wrist) > d(q, wrist) * 1.15
+    }
+    let index = extended(.indexTip, .indexPIP)
+    let middle = extended(.middleTip, .middlePIP)
+    let ring = extended(.ringTip, .ringPIP)
+    let little = extended(.littleTip, .littlePIP)
+    var thumbUp = false
+    if let tt = p(.thumbTip), let ti = p(.thumbIP), let im = p(.indexMCP) {
+      let thumb = d(tt, im) > d(ti, im) * 1.2 && d(tt, wrist) > d(ti, wrist)
+      thumbUp = thumb && tt.y > wrist.y + 0.06 && tt.y > im.y
+    }
+    let n = [index, middle, ring, little].filter { $0 }.count
+    var gesture = "otro"
+    if n == 4 {
+      gesture = "palma"
+    } else if n == 0 && thumbUp {
+      gesture = "pulgar"
+    } else if n == 0 {
+      gesture = "puno"
+    } else if index && middle && !ring && !little {
+      gesture = "paz"
+    } else if index && !middle && !ring && !little {
+      gesture = "senala"
+    }
+    return ["gesture": gesture, "x": Double(wrist.x), "y": Double(1 - wrist.y), "confidence": Double(obs.confidence)]
+  }
+
   func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
     let now = CACurrentMediaTime()
-    if now - lastTime < interval { return }
+    if now - lastTime < (fast ? min(interval, 0.05) : interval) { return }
     lastTime = now
     guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
@@ -247,8 +368,9 @@ final class BipEyes: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
 
     var faces: [[String: Any]] = []
     let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .up, options: [:])
+    let wantHands = now - lastHands > (fast ? 0.1 : 0.3)
     do {
-      try handler.perform([faceRequest])
+      try handler.perform(wantHands ? [faceRequest, handRequest] : [faceRequest])
       for face in faceRequest.results ?? [] {
         let box = face.boundingBox
         var item: [String: Any] = [
@@ -264,6 +386,17 @@ final class BipEyes: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
       payload["error"] = error.localizedDescription
     }
     payload["faces"] = faces
+
+    if wantHands {
+      lastHands = now
+      if let hand = handRequest.results?.first, let h = readHand(hand) { payload["hand"] = h }
+    }
+    // la expresion, solo si hay una cara lo bastante cerca
+    let close = faces.contains { ($0["size"] as? Double ?? 0) > 0.12 }
+    if close && now - lastExpr > (fast ? 0.04 : 0.2), let expr = readExpression(sampleBuffer, now: now) {
+      lastExpr = now
+      payload["expr"] = expr
+    }
     onSee?(payload)
   }
 }
@@ -272,6 +405,9 @@ final class BipEyes: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
 
 final class BipEars {
   var onHear: (([String: Any]) -> Void)?
+  var onSound: (([String: Any]) -> Void)?
+  private var lastLevelAt: CFTimeInterval = 0
+  private var peak: Float = 0
 
   private let engine = AVAudioEngine()
   private let lock = NSLock()
@@ -317,6 +453,7 @@ final class BipEars {
         let current = self.request
         self.lock.unlock()
         current?.append(buffer)
+        self.meter(buffer)
       }
       engine.prepare()
       try engine.start()
@@ -331,6 +468,28 @@ final class BipEars {
       self?.checkSilence()
     }
     completion(true, nil)
+  }
+
+  /// Volumen del sonido cada decima de segundo (para palmadas y musica). Hilo de audio.
+  private func meter(_ buffer: AVAudioPCMBuffer) {
+    guard let data = buffer.floatChannelData?[0] else { return }
+    let n = Int(buffer.frameLength)
+    if n == 0 { return }
+    var sum: Float = 0
+    for i in 0..<n {
+      let x = data[i]
+      sum += x * x
+    }
+    peak = max(peak, (sum / Float(n)).squareRoot())
+    let now = CACurrentMediaTime()
+    if now - lastLevelAt < 0.1 { return }
+    lastLevelAt = now
+    let db = 20 * log10(max(peak, 0.000001))
+    peak = 0
+    let level = max(0, min(1, (Double(db) + 60) / 60))
+    DispatchQueue.main.async { [weak self] in
+      self?.onSound?(["level": level, "db": Double(db)])
+    }
   }
 
   func stop() {
@@ -534,7 +693,9 @@ final class BipModels: NSObject, URLSessionDownloadDelegate {
   }
 
   private func emit(_ payload: [String: Any]) {
-    onEvent?(payload)
+    var p = payload
+    p["file"] = fileName // para saber de qué descarga es cada aviso
+    onEvent?(p)
   }
 
   func urlSession(
