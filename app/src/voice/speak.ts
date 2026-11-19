@@ -4,6 +4,13 @@ import { planSpeech, synthesize } from './droidVoice';
 import { playWav } from './player';
 
 let resumeTimer: ReturnType<typeof setTimeout> | null = null;
+/** true = sigue escuchando mientras pita (para que puedas interrumpirle). */
+let listenWhileSpeaking = true;
+
+export function setListenWhileSpeaking(on: boolean) {
+  listenWhileSpeaking = on;
+  if (on) BipSenses.setHearingPaused(false);
+}
 
 export type SpeakOptions = {
   /** false = pita pero sin subtítulo (para ronroneos y sonidos). */
@@ -13,14 +20,16 @@ export type SpeakOptions = {
 };
 
 /** Bip dice una frase: pone la cara, pita y muestra el subtítulo a la vez.
- *  Mientras habla deja de escuchar, para no oírse a sí mismo. Devuelve cuántos segundos dura. */
+ *  Mientras habla sigue escuchando (para que le puedas interrumpir); si eso se apaga, deja de
+ *  escuchar mientras habla, para no oírse a sí mismo. Devuelve cuántos segundos dura. */
 export async function speak(engine: FaceEngine, text: string, emo: EmotionName, opts: SpeakOptions = {}): Promise<number> {
   engine.setEmotion(emo);
   const plan = planSpeech(text, emo);
   const volume = opts.volume ?? 1;
   let seconds = plan.dur;
+  const pause = volume > 0 && !listenWhileSpeaking;
+  if (pause) BipSenses.setHearingPaused(true);
   if (volume > 0) {
-    BipSenses.setHearingPaused(true);
     try {
       const d = await playWav(synthesize(plan, emo, volume));
       if (d > 0) seconds = d;
@@ -34,7 +43,7 @@ export async function speak(engine: FaceEngine, text: string, emo: EmotionName, 
     end: now + plan.dur * 1000,
     sylls: plan.notes.map((n) => ({ t: now + n.t * 1000, d: n.d * 1000, v: n.v })),
   });
-  if (volume > 0) {
+  if (pause) {
     if (resumeTimer) clearTimeout(resumeTimer);
     resumeTimer = setTimeout(() => BipSenses.setHearingPaused(false), seconds * 1000 + 500);
   }

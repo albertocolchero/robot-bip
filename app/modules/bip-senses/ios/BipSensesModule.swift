@@ -97,6 +97,11 @@ public class BipSensesModule: Module {
       }
     }
 
+    // Cortar los pitidos (cuando le interrumpes)
+    Function("stopWav") {
+      DispatchQueue.main.async { self.voice.stop() }
+    }
+
     // --- Cerebro: el archivo del modelo se descarga una vez y vive en el iPhone
     Function("modelPath") { (fileName: String) -> String? in
       BipModels.existingPath(fileName)
@@ -697,10 +702,12 @@ final class BipEars {
     }
   }
 
-  /// Si llevas un momento callado, damos la frase por terminada.
+  /// Si llevas un momento callado, damos la frase por terminada (antes 1,1 s; ahora menos, para
+  /// contestar antes; si la frase ya acaba en punto o interrogación, todavía menos).
   private func checkSilence() {
     guard running, !paused, !lastText.isEmpty else { return }
-    if CACurrentMediaTime() - lastChange > 1.1 {
+    let ended = lastText.hasSuffix("?") || lastText.hasSuffix(".") || lastText.hasSuffix("!")
+    if CACurrentMediaTime() - lastChange > (ended ? 0.55 : 0.75) {
       lastText = ""
       lock.lock()
       let current = request
@@ -735,6 +742,11 @@ final class BipVoice {
     } catch {
       return -1
     }
+  }
+
+  func stop() {
+    player?.stop()
+    player = nil
   }
 }
 

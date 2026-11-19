@@ -16,6 +16,8 @@ declare class BipSensesModule extends NativeModule<BipSensesEvents> {
   setHearingPaused(paused: boolean): void;
   /** Reproduce un WAV en base64. Devuelve la duración en segundos (-1 si falla). */
   playWav(base64: string): Promise<number>;
+  /** Corta lo que esté sonando (cuando le interrumpes). */
+  stopWav(): void;
   /** Ruta del modelo si ya está descargado; null si no. */
   modelPath(fileName: string): string | null;
   /** Espacio libre en el iPhone, en bytes (-1 si no se sabe). */

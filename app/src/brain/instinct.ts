@@ -10,7 +10,7 @@
 import BipSenses, { type HearEvent, type SeeEvent, type SeenFace, type SoundEvent } from '../../modules/bip-senses';
 import type { EmotionName, FaceEngine } from '../face/engine';
 import { saveTheme, themeCommand } from '../face/theme';
-import { speechSeconds } from '../voice/speak';
+import { setListenWhileSpeaking, speechSeconds } from '../voice/speak';
 import { dayKey, hhmm, spokenDay } from './dates';
 import { GAME_LIST, Games, type GameName } from './games';
 import { Island } from './island';
@@ -22,6 +22,7 @@ import { People, type Person, type WhoEvent } from './people';
 import { Perception, type PerceptionEvent } from './perception';
 import { loadPrefs } from './prefs';
 import { readJSON, writeJSON } from './store';
+import { StreamSpeech } from './streamSpeech';
 import { isNo, isYes, mentionsName, normalize, understand } from './talk';
 import { clockText, parseTimer, sayDuration, Timers, type Timer } from './timers';
 
@@ -181,10 +182,48 @@ export class Instinct {
   private missed: Timer[] = [];
   /** Lo que le dijiste mientras pensaba en otra cosa: te contesta en cuanto termine. */
   private waitingThought: { text: string; at: number } | null = null;
+  /** La respuesta que está diciendo a trozos (para poder cortarla si le interrumpes). */
+  private streamer: StreamSpeech | null = null;
   /** Te acabas de despedir ("adiós", "nada más"): tras contestar, cierra la charla. */
   private closing = false;
   /** Cómo va el oído (para la pestaña «Estado» de los ajustes). */
-  hearing = { partials: 0, finals: 0, ignored: 0, lastAt: 0, lastText: '', errors: 0, lastError: '', toldAt: -Infinity, level: 0, loudest: 0 };
+  hearing = { partials: 0, finals: 0, ignored: 0, lastAt: 0, lastText: '', errors: 0, lastError: '', toldAt: -Infinity, level: 0, loudest: 0, echoes: 0, interrupts: 0 };
+  /** ¿Se le puede interrumpir mientras habla? (sigue escuchando mientras pita) */
+  bargeIn = true;
+  private bargeIns: number[] = [];
+  private bargeInOffUntil = 0;
+  private utteranceAt = 0;
+  private utteranceDuringSpeech = false;
+
+  /** Corta lo que esté diciendo (le has interrumpido). */
+  private stopSpeaking() {
+    // cortar los pitidos en seco necesita la parte nativa nueva (1.6.0); con la 1.5.0, termina el trozo actual
+    if (typeof BipSenses.stopWav === 'function') BipSenses.stopWav();
+    this.life.cancelChain();
+    this.streamer?.cancel();
+    this.streamer = null;
+    this.engine.speech = null;
+  }
+
+  /** Si le "interrumpes" muchas veces seguidas, seguramente se está oyendo a sí mismo: deja de escuchar
+   *  mientras habla durante media hora. */
+  private noteBargeIn() {
+    const now = performance.now();
+    this.hearing.interrupts++;
+    this.bargeIns = [...this.bargeIns.filter((x) => now - x < 60_000), now];
+    if (this.bargeIns.length >= 3) {
+      this.bargeIns = [];
+      this.setBargeIn(false);
+      this.bargeInOffUntil = now + 30 * 60_000;
+      this.engine.showNotice('Creo que me estaba oyendo a mí mismo: un rato no te escucho mientras hablo.', 8000);
+    }
+  }
+
+  setBargeIn(on: boolean) {
+    this.bargeIn = on;
+    this.bargeInOffUntil = 0;
+    setListenWhileSpeaking(on);
+  }
 
   /** Cómo está Bip por dentro, en frases cortas (pestaña «Estado» de los ajustes). */
   status(): string[] {
@@ -210,6 +249,7 @@ export class Instinct {
       `Cerebro: ${mind}`,
       `Caras delante: ${this.people.faceCount()}${here.length ? ` (reconoce a ${joinNames(here)})` : ''} · mirándole: ${this.attending ? 'sí' : 'no'}`,
       `Lector de expresiones: ${this.readerState}`,
+      `Interrumpirle mientras habla: ${this.bargeIn ? 'sí' : 'no'} · interrupciones: ${h.interrupts} · ecos ignorados: ${h.echoes}`,
     ];
   }
   lastLight: number | null = null;
@@ -221,7 +261,9 @@ export class Instinct {
     this.buzz = d.buzz;
     this.sayRaw = d.say;
     this.people = new People(d.memory.name);
-    this.island = new Island(d.engine, this.timers, loadPrefs().island);
+    const prefs = loadPrefs();
+    this.island = new Island(d.engine, this.timers, prefs.island);
+    this.setBargeIn(prefs.interrupt);
 
     this.life = new Life({
       now: () => Date.now(),
@@ -776,20 +818,50 @@ export class Instinct {
     this.hearing.lastAt = Date.now();
     if (!e.final) {
       this.hearing.partials++;
+      // ¿empezaste a hablar mientras Bip pitaba? (puede ser que le interrumpas... o que se oiga a sí mismo)
+      if (!this.utteranceAt) {
+        this.utteranceAt = now;
+        this.utteranceDuringSpeech = this.engine.speech !== null;
+      }
       return;
     }
+    const duringSpeech = this.utteranceDuringSpeech || this.engine.speech !== null;
+    this.utteranceAt = 0;
+    this.utteranceDuringSpeech = false;
     this.hearing.finals++;
     this.hearing.lastText = e.text;
     const text = e.text;
     const t = normalize(text);
-    this.engine.showHeard(text);
     if (this.life.privateMode) return;
 
     // un temporizador sonando: "vale", "para", "ya" lo apagan
     if (this.ringing && (mentionsName(text) || /\b(vale|para|parar|ya|apaga|apagalo|calla|gracias|ok|basta|silencio|entendido|vale vale)\b/.test(t))) {
+      this.engine.showHeard(text);
       this.stopRinging();
       return;
     }
+
+    // le hablas mientras pita: "para", "calla", "espera" le cortan; una frase de verdad, también
+    // (y luego la contesta). Si solo son ruiditos, seguramente se está oyendo a sí mismo: no hace caso.
+    if (duringSpeech && this.bargeIn) {
+      const stop = /^(?:(?:oye|eh|bip)\s+)?(para|parate|calla|callate|espera|basta|stop|silencio|ya vale|vale vale|vale ya|un momento)\b/.test(t);
+      const words = t.split(' ').filter(Boolean);
+      const real = words.filter((w) => w.length >= 3 && !/^(bip|pip|vip|bipbip|pii+)$/.test(w));
+      if (stop) {
+        this.engine.showHeard(text);
+        this.stopSpeaking();
+        this.engine.setEmotion('neutral', 1200);
+        return;
+      }
+      if (words.length >= 3 && real.length >= 2) {
+        this.noteBargeIn();
+        this.stopSpeaking();
+      } else {
+        this.hearing.echoes++;
+        return;
+      }
+    }
+    this.engine.showHeard(text);
 
     // ¿le hablan a él? Casi siempre: no hace falta decir «Bip» (mejor que se equivoque contestando
     // de más que obligarte a llamarle). Solo se calla si empiezas o acabas la frase con el nombre de
@@ -1218,20 +1290,29 @@ export class Instinct {
     const q = this.lastQuestion;
     const asked = q && performance.now() - q.at < 45_000 ? q.text : undefined;
     this.lastQuestion = null;
-    const t = await this.mind.think(text, this.situation(), asked);
+    // empieza a hablar en cuanto tiene las primeras palabras, sin esperar a la frase entera
+    const streamer = new StreamSpeech((emo, chunk) => this.answer(emo, chunk), speechSeconds);
+    this.streamer = streamer;
+    const t = await this.mind.think(text, this.situation(), asked, (p) => {
+      if (!this.sleeping && !this.life.privateMode) streamer.feed(p);
+    });
+    if (this.streamer === streamer) this.streamer = null;
     if (this.sleeping || this.life.privateMode) return;
+    // le has interrumpido mientras contestaba: lo que quedaba ya no se dice
+    if (streamer.isCancelled) return;
     if (!t) {
-      this.answer('confundido', 'Mmm… se me ha ido el santo al cielo.');
+      if (!streamer.started) this.answer('confundido', 'Mmm… se me ha ido el santo al cielo.');
       return;
     }
     // la mente ha decidido jugar
     if (t.accion && !this.games.playing) {
+      streamer.cancel();
       const r = t.accion === 'juegos' ? this.games.menu() : this.games.start(t.accion as GameName);
       if (r) this.answer(r.emo, r.text);
       this.life.noteTalk(text, '(jugamos)');
       return;
     }
-    this.answer(t.emo, t.text);
+    if (!streamer.finish(t.emo, t.text)) this.answer(t.emo, t.text);
     this.life.noteTalk(text, t.text);
   }
 
@@ -1328,6 +1409,8 @@ export class Instinct {
   // ================================================================ cada 20 segundos
   tick() {
     if (!this.uiOpen) this.life.tick();
+    // pasada la media hora de castigo, vuelve a escuchar mientras habla
+    if (!this.bargeIn && this.bargeInOffUntil && performance.now() > this.bargeInOffUntil && loadPrefs().interrupt) this.setBargeIn(true);
     this.games.tick();
     this.ensureFaceReader();
     if (this.place && !this.life.privateMode) {

@@ -174,6 +174,11 @@ class BipSensesModule extends NativeModule<BipSensesEvents> {
     return Number.isFinite(audio.duration) ? audio.duration : -1;
   }
 
+  stopWav() {
+    this.audio?.pause();
+    this.audio = null;
+  }
+
   // Descargas simuladas: tardan unos segundos y no bajan nada.
   private fakeDownloads = new Map<string, ReturnType<typeof setInterval>>();
 

@@ -44,6 +44,11 @@ function applyVolume(instinct: Instinct, v: number) {
   savePrefs({ volume: v });
 }
 
+function applyInterrupt(instinct: Instinct, on: boolean) {
+  instinct.setBargeIn(on);
+  savePrefs({ interrupt: on });
+}
+
 function applyIsland(instinct: Instinct, on: boolean) {
   instinct.island.setEnabled(on);
   savePrefs({ island: on });
@@ -59,6 +64,7 @@ export function Settings({ engine, instinct, first, onClose, onPreviewVoice }: P
   const [volume, setVolume] = useState(instinct.life.baseVolume);
   const [quiet, setQuiet] = useState({ ...instinct.life.journal.settings });
   const [island, setIsland] = useState(() => loadPrefs().island);
+  const [interrupt, setInterrupt] = useState(() => loadPrefs().interrupt);
   const [, setVersion] = useState(0);
   const [confirming, setConfirming] = useState<string | null>(null);
   const accent = COLORS[theme.color];
@@ -172,6 +178,18 @@ export function Settings({ engine, instinct, first, onClose, onPreviewVoice }: P
 
         {tab === 'sonido' && (
           <>
+            <Pressable
+              onPress={() => {
+                setInterrupt(!interrupt);
+                applyInterrupt(instinct, !interrupt);
+              }}
+              style={styles.toggleRow}
+            >
+              <View style={[styles.toggle, interrupt && { backgroundColor: accent, borderColor: accent }]}>
+                <View style={[styles.knob, interrupt && styles.knobOn]} />
+              </View>
+              <Text style={styles.label}>Puedes interrumpirle mientras habla («para», «espera», o dile otra cosa)</Text>
+            </Pressable>
             <View style={styles.line}>
               <Text style={styles.label}>Volumen de la voz</Text>
               <Stepper onMinus={() => changeVolume(-0.2)} onPlus={() => changeVolume(0.2)} accent={accent}>

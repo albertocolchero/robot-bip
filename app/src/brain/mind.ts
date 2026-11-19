@@ -8,8 +8,9 @@ import type { EmotionName, FaceEngine } from '../face/engine';
 import type { CardKind } from './journal';
 import type { Fact, MindLike, Situation, Thought } from './life';
 import { loadBrain, type Brain, type ChatMessage } from './llm';
+import { partialField, type PartialThought } from './streamSpeech';
 
-export type { Situation, Thought };
+export type { PartialThought, Situation, Thought };
 
 export const MODEL = {
   file: 'gemma-4-E2B-it-Q4_K_M.gguf',
@@ -277,12 +278,12 @@ export class Mind implements MindLike {
     }
   }
 
-  private async ask(user: string, schema: object, maxTokens: number, withHistory = true): Promise<Record<string, unknown> | null> {
+  private async ask(user: string, schema: object, maxTokens: number, withHistory = true, onText?: (soFar: string) => void): Promise<Record<string, unknown> | null> {
     if (!this.ready || this.busy || !this.brain) return null;
     this.busy = true;
     try {
       const messages: ChatMessage[] = [{ role: 'system', content: SYSTEM }, ...(withHistory ? this.history : []), { role: 'user', content: user }];
-      return json(await this.brain.complete(messages, schema, maxTokens));
+      return json(await this.brain.complete(messages, schema, maxTokens, onText));
     } catch {
       return null;
     } finally {
@@ -297,8 +298,21 @@ export class Mind implements MindLike {
   }
 
   /** Contesta a lo que le han dicho (buscando en internet si le falta un dato). */
-  async think(heard: string, s: Situation, asked?: string): Promise<Thought | null> {
+  async think(heard: string, s: Situation, asked?: string, onPartial?: (p: PartialThought) => void): Promise<Thought | null> {
     if (performance.now() - this.lastChatAt > 10 * 60_000) this.history = [];
+    // cada respuesta del modelo se va contando palabra a palabra a quien la va a decir
+    let parts = 0;
+    const stream = () => {
+      const part = parts++;
+      if (!onPartial) return undefined;
+      return (soFar: string) => {
+        const f = partialField(soFar, 'frase');
+        if (!f) return;
+        const e = partialField(soFar, 'emocion');
+        const emo = e?.done && EMOS.includes(e.value as EmotionName) ? (e.value as EmotionName) : 'neutral';
+        onPartial({ part, emo, text: f.value.replace(/\s+/g, ' ').trimStart(), done: f.done });
+      };
+    };
     const who = this.whoName() ?? 'La persona';
     // si contesta a una pregunta de Bip ("sí", "vale"), la mente tiene que saber cuál era
     const said = `${asked ? `(Tú le acabas de decir: «${asked}»)\n` : ''}${who} te dice: «${heard}»`;
@@ -306,7 +320,7 @@ export class Mind implements MindLike {
     const facts = !!this.lookup && needsFacts(heard);
     const canSearch = !!this.lookup && (facts || looksLikeQuestion(heard));
     if (!canSearch) {
-      const t = thought(await this.ask(base, SCHEMA, 100));
+      const t = thought(await this.ask(base, SCHEMA, 100, true, stream()));
       if (t) this.remember(said, t);
       return t;
     }
@@ -316,11 +330,15 @@ export class Mind implements MindLike {
             `${base}\n(Esto va de cosas reales: NO contestes de memoria. Escribe en "buscar" de 2 a 5 palabras para buscarlo en internet —por ejemplo, el nombre de la persona, la película o el grupo y de qué se trata— y en "frase" algo como "Déjame que lo mire".)`,
             SCHEMA_MUST_SEARCH,
             70,
+            true,
+            stream(),
           )
         : await this.ask(
             `${base}\n(Si para contestar necesitas un dato que no sabes seguro —actualidad, fechas, personas, lugares, cifras, el tiempo—, escribe en "buscar" de 2 a 5 palabras para buscarlo en internet y en "frase" algo como "Déjame que lo busque". Si no hace falta, deja "buscar" vacío.)`,
             SCHEMA_SEARCH,
             100,
+            true,
+            stream(),
           ),
     );
     if (!first?.buscar || !this.lookup) {
@@ -337,7 +355,7 @@ export class Mind implements MindLike {
     } catch {
       extra = `(Has intentado buscar «${first.buscar}» en internet, pero ahora no hay conexión. Díselo con gracia.)`;
     }
-    const t = thought(await this.ask(`${base}\n${extra}`, SCHEMA, 110));
+    const t = thought(await this.ask(`${base}\n${extra}`, SCHEMA, 110, true, stream()));
     if (t) this.remember(said, t);
     return t;
   }
