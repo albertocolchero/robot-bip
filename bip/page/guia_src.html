@@ -1,0 +1,934 @@
+<title>Robot Bip</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Layout: guía de una columna (texto ~68ch) con "bancos de trabajo" más anchos para la cara, el visor 3D y las tablas. */
+:root{
+  --bg:#ECEFF2;
+  --surface:#F8F9FB;
+  --raised:#FFFFFF;
+  --ink:#17202B;
+  --muted:#566173;
+  --line:#D3D9E1;
+  --accent:#B4570B;
+  --accent-soft:#F5E4D2;
+  --glow:#4FE3C1;
+  --screen:#05080B;
+  --device:#2A2F37;
+  --device-edge:#3A414B;
+  --grid:#C9D1DA;
+  --f-display:"Chakra Petch","Segoe UI",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+  --r:10px;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0E1217; --surface:#151A21; --raised:#1A2029; --ink:#E3E8EE; --muted:#97A3B2;
+    --line:#29323D; --accent:#F2A03D; --accent-soft:#3A2A17; --device:#2A2F37; --device-edge:#454D59;
+    --grid:#2A333E; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0E1217; --surface:#151A21; --raised:#1A2029; --ink:#E3E8EE; --muted:#97A3B2;
+  --line:#29323D; --accent:#F2A03D; --accent-soft:#3A2A17; --device:#2A2F37; --device-edge:#454D59;
+  --grid:#2A333E; color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{
+  background:var(--bg); color:var(--ink); font-family:var(--f-body); font-size:16.5px; line-height:1.62;
+  padding-left:max(16px,env(safe-area-inset-left,0px)); padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0 64px;
+}
+.wrap{max-width:1080px;margin:0 auto}
+.prose{max-width:700px}
+h1,h2,h3{font-family:var(--f-display);line-height:1.15;text-wrap:balance;margin:0}
+h2{font-size:clamp(1.55rem,1.2rem + 1.2vw,2.05rem);font-weight:600;letter-spacing:.01em}
+h3{font-size:1.15rem;font-weight:600}
+p{margin:0}
+a{color:var(--accent);text-underline-offset:3px}
+a:focus-visible,button:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.eyebrow{font-family:var(--f-mono);font-size:.74rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.mono{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+section{padding-block:56px 8px;display:grid;gap:22px}
+section + section{border-top:1px solid var(--line)}
+.stack{display:grid;gap:14px}
+
+/* ---------- cabecera ---------- */
+.hero{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr);gap:40px;align-items:center;padding-block:44px 40px}
+.hero h1{font-size:clamp(3.4rem,2.4rem + 4vw,5.6rem);font-weight:700;letter-spacing:-.01em;line-height:.95}
+.hero h1 span{color:var(--accent)}
+.lede{font-size:1.18rem;line-height:1.55;max-width:34em}
+.facts{display:flex;flex-wrap:wrap;gap:10px 22px;margin-top:4px}
+.fact{display:grid;gap:0}
+.fact b{font-family:var(--f-display);font-size:1.35rem;font-weight:600}
+.fact small{font-size:.82rem;color:var(--muted)}
+.device-wrap{display:grid;justify-items:center;gap:12px}
+.droid{
+  --pla:#E6E9ED; --pla-edge:#C9CFD7;
+  width:min(100%,440px);aspect-ratio:160/94;background:linear-gradient(160deg,#F4F6F8,var(--pla) 55%,#D5DAE1);
+  border-radius:17% / 29%;position:relative;margin-top:44px;
+  box-shadow:inset 0 0 0 1.5px var(--pla-edge),inset 0 -6px 0 rgba(0,0,0,.05),0 22px 40px -20px rgba(10,14,20,.5);
+  display:grid;place-items:center;padding:0 4.4% 9%;
+}
+.droid .phone{width:100%;aspect-ratio:146.7/71.5;background:#0b0d10;border-radius:12% / 25%;padding:2.3%;margin-top:4.5%;box-shadow:inset 0 0 0 1.5px #2b3038}
+.droid .scr{position:relative;width:100%;height:100%;border-radius:10% / 21%;overflow:hidden;background:var(--screen)}
+.droid canvas{width:100%;height:100%;display:block}
+.droid .notch{position:absolute;right:0;top:50%;transform:translateY(-50%);width:4.2%;height:38%;background:#000;border-radius:40% 0 0 40% / 12% 0 0 12%}
+.droid .ant{position:absolute;top:-38px;width:4px;height:42px;background:#E08A2A;border-radius:2px;transform-origin:bottom center}
+.droid .ant::before{content:"";position:absolute;top:-10px;left:50%;width:15px;height:15px;margin-left:-7.5px;border-radius:50%;background:#F2A03D;box-shadow:inset -2px -3px 0 rgba(0,0,0,.12)}
+.droid .ant.l{left:9%;transform:rotate(-15deg)}
+.droid .ant.r{right:9%;transform:rotate(15deg)}
+.device-cap{font-size:.8rem;color:var(--muted);text-align:center;max-width:340px}
+.btn{
+  font:500 .92rem/1 var(--f-body);color:var(--ink);background:var(--raised);border:1px solid var(--line);
+  padding:10px 14px;border-radius:8px;cursor:pointer;display:inline-flex;align-items:center;gap:8px;
+}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .btn.primary{color:#1a1206}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .btn.primary{color:#1a1206}}
+.btn[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft)}
+
+/* ---------- caja "tu primer paso" ---------- */
+.firststep{background:var(--raised);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:var(--r);padding:22px 24px;display:grid;gap:12px}
+.firststep h2{font-size:1.35rem}
+ol.steps{margin:0;padding:0;list-style:none;counter-reset:s;display:grid;gap:10px}
+ol.steps > li{counter-increment:s;display:grid;grid-template-columns:2rem 1fr;gap:10px;align-items:start}
+ol.steps > li::before{content:counter(s);font-family:var(--f-display);font-weight:700;font-size:1.05rem;color:var(--accent);
+  border:1.5px solid var(--accent);border-radius:50%;width:1.85rem;height:1.85rem;display:grid;place-items:center;line-height:1}
+
+/* ---------- capas ---------- */
+.layers{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.layer{background:var(--raised);border:1px solid var(--line);border-radius:var(--r);padding:18px;display:grid;gap:8px;align-content:start}
+.layer .where{font-family:var(--f-mono);font-size:.74rem;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+.layer ul{margin:0;padding-left:1.1em;display:grid;gap:4px;font-size:.95rem}
+.diagram{overflow-x:auto}
+.diagram svg{display:block;min-width:640px;width:100%;height:auto}
+.dg-box{fill:var(--raised);stroke:var(--line)}
+.dg-robot{fill:var(--accent-soft);stroke:var(--accent)}
+.dg-t{fill:var(--ink);font:600 14px var(--f-display)}
+.dg-s{fill:var(--muted);font:12px var(--f-body)}
+.dg-a{stroke:var(--muted);stroke-width:1.5;fill:none}
+.dg-ah{fill:var(--muted)}
+.dg-l{fill:var(--accent);font:500 11.5px var(--f-mono)}
+
+/* ---------- un día ---------- */
+.day{display:grid;gap:0;margin:0;padding:0;list-style:none;border-left:2px solid var(--line);margin-left:6px}
+.day li{display:grid;grid-template-columns:4.2rem 1fr;gap:14px;padding:10px 0 10px 18px;position:relative}
+.day li::before{content:"";position:absolute;left:-7px;top:17px;width:12px;height:12px;border-radius:50%;background:var(--bg);border:2px solid var(--accent)}
+.day time{font-family:var(--f-mono);font-weight:500;color:var(--accent);padding-top:1px}
+.day .say{font-family:var(--f-mono);font-size:.88rem;color:var(--muted)}
+
+/* ---------- banco: cara + voz ---------- */
+.bench{background:var(--raised);border:1px solid var(--line);border-radius:14px;padding:20px;display:grid;gap:18px}
+.voice{display:grid;grid-template-columns:minmax(0,.95fr) minmax(0,1.05fr);gap:24px;align-items:start}
+.voice .scr-big{background:var(--device);border-radius:14px;padding:14px;box-shadow:inset 0 0 0 2px var(--device-edge)}
+.voice .scr-big canvas{width:100%;aspect-ratio:1040/480;display:block;background:var(--screen);border-radius:14px}
+.voice .scr-big{align-self:center}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.field{display:grid;gap:6px}
+.field label{font-size:.85rem;color:var(--muted)}
+.field input{font:1rem var(--f-body);color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 12px;width:100%}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.note{font-size:.88rem;color:var(--muted)}
+
+/* ---------- visor 3D ---------- */
+.viewer{position:relative;border-radius:12px;overflow:hidden;background:var(--surface);border:1px solid var(--line);aspect-ratio:16/10;min-height:300px}
+.viewer canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
+.viewer .hint{position:absolute;left:12px;bottom:10px;font-family:var(--f-mono);font-size:.74rem;color:var(--muted);pointer-events:none}
+.viewer .fallback{position:absolute;inset:0;display:grid;place-items:center;padding:20px;text-align:center;color:var(--muted)}
+.vctl{display:flex;flex-wrap:wrap;gap:12px 20px;align-items:center}
+.vctl input[type=range]{accent-color:var(--accent);width:180px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:.86rem}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:12px;height:12px;border-radius:3px;display:inline-block;border:1px solid var(--line)}
+
+/* ---------- tablas ---------- */
+.tbl{overflow-x:auto;border:1px solid var(--line);border-radius:var(--r);background:var(--raised)}
+table{border-collapse:collapse;width:100%;min-width:680px;font-size:.93rem}
+table.wide{min-width:820px}
+td.file{font-family:var(--f-mono);white-space:nowrap}
+th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-family:var(--f-mono);font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:500;background:var(--surface)}
+tr:last-child td{border-bottom:0}
+td.num,th.num{text-align:right;font-family:var(--f-mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+tfoot td{font-weight:600;background:var(--surface)}
+.tag{display:inline-block;font-family:var(--f-mono);font-size:.7rem;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border-radius:99px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+.tag.opt{border-color:var(--accent);color:var(--accent)}
+
+/* ---------- montaje y fases ---------- */
+ol.build{margin:0;padding:0;list-style:none;counter-reset:b;display:grid;gap:14px}
+ol.build > li{counter-increment:b;display:grid;grid-template-columns:2.6rem 1fr;gap:14px;background:var(--raised);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px}
+ol.build > li::before{content:counter(b,decimal-leading-zero);font-family:var(--f-display);font-weight:700;font-size:1.3rem;color:var(--accent);line-height:1.2}
+ol.build h3{margin-bottom:4px}
+.check{font-size:.9rem;color:var(--muted);margin-top:6px}
+.check b{color:var(--ink);font-weight:600}
+.phases{display:grid;gap:12px;margin:0;padding:0;list-style:none}
+.phase{display:grid;grid-template-columns:5.4rem 1fr;gap:16px;padding:16px 0;border-bottom:1px dashed var(--line)}
+.phase:last-child{border-bottom:0}
+.phase .ph{font-family:var(--f-display);font-weight:700;font-size:1.05rem;color:var(--accent);line-height:1.2}
+.phase .ph small{display:block;font-family:var(--f-mono);font-weight:400;font-size:.72rem;color:var(--muted);letter-spacing:.04em;margin-top:4px}
+.phase p + p{margin-top:6px}
+
+/* ---------- cerebro ---------- */
+.brains{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.brain{background:var(--raised);border:1px solid var(--line);border-radius:var(--r);padding:18px;display:grid;gap:8px;align-content:start}
+.brain.rec{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.brain .tag{justify-self:start}
+.brain .cost{font-family:var(--f-display);font-size:1.5rem;font-weight:600}
+.brain .cost small{font-family:var(--f-body);font-size:.85rem;font-weight:400;color:var(--muted)}
+.calc{font-family:var(--f-mono);font-size:.86rem;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;line-height:1.7}
+ul.plain{margin:0;padding-left:1.1em;display:grid;gap:6px}
+.src{font-size:.88rem;display:grid;gap:4px;margin:0;padding-left:1.1em}
+
+@media (max-width:860px){
+  .hero{grid-template-columns:1fr;gap:28px}
+  .layers,.brains{grid-template-columns:1fr}
+  .voice{grid-template-columns:1fr}
+}
+@media (max-width:520px){
+  body{font-size:16px}
+  .phase{grid-template-columns:1fr;gap:6px}
+  ol.build > li{grid-template-columns:1fr;gap:6px}
+  .day li{grid-template-columns:1fr;gap:2px}
+  .viewer{aspect-ratio:4/5}
+}
+@media (prefers-reduced-motion: reduce){*{scroll-behavior:auto}}
+</style>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="stack">
+    <div class="eyebrow">Proyecto de robótica para empezar desde cero</div>
+    <h1>Bip<span>.</span></h1>
+    <p class="lede">Un droide de escritorio hecho con tu iPhone 14. La pantalla es su cara, la cámara frontal son sus ojos y su mente es un modelo de IA que vive dentro del teléfono, sin internet. Habla con pitidos.</p>
+    <div class="facts" aria-label="Datos clave">
+      <div class="fact"><b class="mono">10–60 €</b><small>en total, cuenta a ojo</small></div>
+      <div class="fact"><b class="mono">0 €/mes</b><small>IA local, sin nube</small></div>
+      <div class="fact"><b class="mono">0</b><small>soldaduras</small></div>
+      <div class="fact"><b class="mono">0 €</b><small>de electrónica: ya tienes el iPhone</small></div>
+    </div>
+  </div>
+  <div class="device-wrap">
+    <div class="droid" aria-label="Simulación de la cabeza del robot">
+      <span class="ant l" aria-hidden="true"></span><span class="ant r" aria-hidden="true"></span>
+      <div class="phone"><div class="scr"><canvas id="heroFace" width="1040" height="480" role="img" aria-label="Cara animada de Bip"></canvas><i class="notch" aria-hidden="true"></i></div></div>
+    </div>
+    <div class="row"><button class="btn" id="heroSpeak" type="button">▶ Escuchar lo que dice</button></div>
+    <p class="device-cap">El iPhone va tumbado dentro de la cabeza. La muesca de la derecha es la cámara con la que Bip te ve.</p>
+  </div>
+</header>
+
+<aside class="firststep" aria-labelledby="fs-t">
+  <div class="eyebrow">Lo que te toca a ti ahora</div>
+  <h2 id="fs-t">Tu primer paso</h2>
+  <ol class="steps">
+    <li><span><b>Prepara el iPhone.</b> Si tiene algo que quieras guardar, haz una copia. Después actualízalo a la última versión de iOS y sácale la SIM.</span></li>
+    <li><span><b>Crea una cuenta gratuita de GitHub</b> si no la tienes, y ten a mano tu Apple ID. Con las dos instalaremos la app en el iPhone sin necesidad de un Mac.</span></li>
+    <li><span><b>Busca quién te imprima las 6 piezas</b> (unos 230 g de plástico PLA): un amigo con impresora, el espacio maker de tu biblioteca o un servicio online. Los archivos STL acompañan a esta guía.</span></li>
+  </ol>
+</aside>
+
+<section aria-labelledby="s-ios">
+  <div class="prose stack">
+    <div class="eyebrow">La pregunta del millón</div>
+    <h2 id="s-ios">¿Y si le quitamos iOS?</h2>
+    <p><b>En un iPhone 14 no se puede.</b> Cuando el iPhone se enciende, un programa grabado de fábrica dentro del chip, que nadie puede cambiar, comprueba que lo siguiente que arranca lleva la firma de Apple. Si no la lleva, no arranca. Esa comprobación se repite en cada paso hasta llegar a iOS.</p>
+    <p>El único agujero conocido en ese primer programa (se llama checkm8, de 2019) solo existe en los chips hasta el A11, es decir, hasta el iPhone 8 y el X. Gracias a él se llegó a arrancar Android y Linux en un iPhone 7, y a medias. El iPhone 14 lleva el chip A15, que no tiene ese agujero ni ningún otro conocido. El jailbreak tampoco sirve: no quita iOS, solo da más permisos dentro de él, y solo existe para algunas versiones antiguas.</p>
+    <p>Y aunque se pudiera, perderíamos lo mejor. Los programas que hacen funcionar la pantalla, la cámara, los micrófonos y el chip de IA viven dentro de iOS. Sería como quitarle la centralita a un coche: el motor sigue ahí, pero no arranca.</p>
+    <h3>Cómo conseguimos que sea 100 % Bip igualmente</h3>
+    <ul class="plain">
+      <li>Borramos todo y en el iPhone queda solo la app de Bip.</li>
+      <li>El <b>Acceso guiado</b> de iOS encierra el teléfono dentro de Bip: sin notificaciones, sin Centro de control y sin gestos para salir. Solo se sale con tu código.</li>
+      <li>La app impide que la pantalla se apague. Sin SIM, sin cuentas y sin avisos, nadie notará que debajo hay un iPhone.</li>
+      <li>iOS se queda escondido haciendo de sistema nervioso: maneja la pantalla, la cámara, la batería y el chip de IA, y Bip lo aprovecha todo.</li>
+    </ul>
+    <p class="note">Lo único que no evitamos: si se apaga del todo (batería a cero o reinicio), al encenderlo hay que abrir Bip a mano. Con un Mac se puede activar el «modo de app única», que lo arranca solo; lo dejamos como mejora.</p>
+  </div>
+</section>
+
+<section aria-labelledby="s-idea">
+  <div class="prose stack">
+    <div class="eyebrow">La idea</div>
+    <h2 id="s-idea">Qué hace a Bip inteligente y no solo reactivo</h2>
+    <p>Hoy, casi todos los asistentes funcionan como un timbre: no hacen nada hasta que les hablas. Eso es ser <b>reactivo</b>. Bip se parece más a una mascota con la cabeza ocupada: sus sentidos están siempre encendidos, guarda memoria de lo que pasa, tiene un ánimo que cambia con las horas y cada pocos minutos se pregunta <i>«¿hago algo?»</i>. Si llevas dos horas sin moverte del ordenador, te lo dice sin que se lo pidas.</p>
+    <p>Todo ocurre dentro del iPhone, sin internet y sin cuotas. El trabajo se reparte en tres capas: el cuerpo siente, el instinto reacciona al momento y la mente, un modelo de IA que entiende texto e imágenes, solo se pone a pensar cuando merece la pena.</p>
+  </div>
+  <div class="layers">
+    <div class="layer">
+      <div class="where">Lo que ya trae el iPhone</div>
+      <h3>Cuerpo</h3>
+      <p class="muted">Lo que siente y cómo se expresa.</p>
+      <ul>
+        <li>Pantalla OLED de 6,1″: su cara</li>
+        <li>Cámara frontal de 12 MP con sensor de profundidad (el de Face ID)</li>
+        <li>3 micrófonos y 2 altavoces</li>
+        <li>Acelerómetro, giroscopio, brújula y barómetro</li>
+        <li>Pantalla táctil para caricias y vibración para responder</li>
+      </ul>
+    </div>
+    <div class="layer">
+      <div class="where">En el iPhone · al instante</div>
+      <h3>Instinto</h3>
+      <p class="muted">Reflejos que no necesitan pensar.</p>
+      <ul>
+        <li>Detecta caras y personas con la visión de Apple, sin internet</li>
+        <li>Te sigue con la mirada</li>
+        <li>Se asusta si lo mueves o lo levantas</li>
+        <li>Vibra contento si le acaricias</li>
+        <li>Se cansa si el teléfono se calienta</li>
+      </ul>
+    </div>
+    <div class="layer">
+      <div class="where">En el iPhone · IA local</div>
+      <h3>Mente</h3>
+      <p class="muted">Entiende, recuerda y decide.</p>
+      <ul>
+        <li>Oye y pasa tu voz a texto con Whisper</li>
+        <li>Ve y piensa con Gemma 4 E2B</li>
+        <li>Lleva un diario y fichas de personas y cosas</li>
+        <li>Tiene un ánimo que cambia solo</li>
+        <li>Decide cuándo hablar y qué cara poner</li>
+      </ul>
+    </div>
+  </div>
+  <div class="diagram" role="img" aria-label="Esquema: dentro del iPhone, los sentidos alimentan al instinto y a la mente, que deciden la expresión: cara, pitidos, subtítulos y vibración">
+    <svg viewBox="0 0 860 236" xmlns="http://www.w3.org/2000/svg">
+      <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="dg-ah"/></marker></defs>
+      <rect x="10" y="10" width="840" height="216" rx="14" class="dg-robot"/>
+      <text x="30" y="38" class="dg-t">iPhone 14 · todo dentro, sin internet</text>
+      <rect x="30" y="54" width="220" height="104" rx="8" class="dg-box"/>
+      <text x="44" y="78" class="dg-t">Sentidos</text>
+      <text x="44" y="100" class="dg-s">cámara con profundidad</text>
+      <text x="44" y="118" class="dg-s">micrófonos · tacto</text>
+      <text x="44" y="136" class="dg-s">movimiento · luz · batería</text>
+      <rect x="320" y="54" width="220" height="104" rx="8" class="dg-box"/>
+      <text x="334" y="78" class="dg-t">Instinto</text>
+      <text x="334" y="100" class="dg-s">caras y personas (Vision)</text>
+      <text x="334" y="118" class="dg-s">sobresaltos, caricias</text>
+      <text x="334" y="136" class="dg-s">al instante, sin pensar</text>
+      <rect x="610" y="54" width="220" height="104" rx="8" class="dg-box"/>
+      <text x="624" y="78" class="dg-t">Mente</text>
+      <text x="624" y="100" class="dg-s">Whisper: oír</text>
+      <text x="624" y="118" class="dg-s">Gemma 4 E2B: ver y pensar</text>
+      <text x="624" y="136" class="dg-s">memoria · ánimo · decidir</text>
+      <path d="M250,106 L316,106" class="dg-a" marker-end="url(#ah)"/>
+      <path d="M540,106 L606,106" class="dg-a" marker-end="url(#ah)"/>
+      <text x="548" y="98" class="dg-l">si importa</text>
+      <path d="M430,158 L430,186" class="dg-a" marker-end="url(#ah)"/>
+      <path d="M720,158 C720,190 600,196 560,196" class="dg-a" marker-end="url(#ah)"/>
+      <text x="300" y="206" class="dg-t">Expresión: cara · pitidos · subtítulos · vibración</text>
+    </svg>
+  </div>
+</section>
+
+<section aria-labelledby="s-dia">
+  <div class="prose stack">
+    <div class="eyebrow">Ejemplo de comportamiento que programaremos</div>
+    <h2 id="s-dia">Un día con Bip</h2>
+    <p>Nadie le da órdenes en todo el día. Todo lo que hace sale de lo que nota, de lo que recuerda y de su ánimo.</p>
+  </div>
+  <ol class="day prose">
+    <li><time>08:52</time><div>Nota que hay luz y que alguien se acerca. Reconoce tu cara, pone ojos contentos y saluda con un pitido. <div class="say">«¡Buenos días! Ayer dijiste que hoy tenías la reunión.»</div></div></li>
+    <li><time>10:40</time><div>Lleva dos horas viéndote quieto delante de la pantalla. Lo decide él solo. <div class="say">«Llevas un buen rato. ¿Estiramos?»</div></div></li>
+    <li><time>13:15</time><div>No hay nadie. Se aburre, mira a los lados, baja el brillo y apunta en su diario que has salido.</div></li>
+    <li><time>17:30</time><div>Te lo llevas a la terraza con la batería de la base. Nota mucha más luz y ve plantas. <div class="say">«¿Dónde estamos? Me gusta.»</div></div></li>
+    <li><time>23:05</time><div>Oscuridad y silencio. Se despide con un pitido grave y se duerme con la pantalla al mínimo.</div></li>
+  </ol>
+</section>
+
+<section aria-labelledby="s-voz">
+  <div class="prose stack">
+    <div class="eyebrow">Pruébalo aquí</div>
+    <h2 id="s-voz">Su cara y su idioma de pitidos</h2>
+    <p>Bip no usa voz humana. Cada palabra se convierte siempre en la misma melodía, así que su idioma es coherente: «hola» suena siempre igual. La emoción cambia el tono: contento es agudo y saltarín, triste es grave y lento, y una pregunta sube al final. Lo que dice aparece en subtítulos.</p>
+  </div>
+  <div class="bench voice">
+    <div class="scr-big"><canvas id="demoFace" width="1040" height="480" role="img" aria-label="Cara de Bip controlada por la demo"></canvas></div>
+    <div class="stack">
+      <div class="field">
+        <span class="eyebrow">1 · Elige cómo se siente</span>
+        <div class="chips" id="emoChips" role="group" aria-label="Emociones"></div>
+      </div>
+      <div class="field">
+        <label for="sayText">2 · Escribe lo que quiere decir</label>
+        <input id="sayText" type="text" maxlength="90" value="¿Eso que hay en la mesa es nuevo?">
+      </div>
+      <div class="row">
+        <button class="btn primary" id="sayBtn" type="button">▶ Que lo diga</button>
+        <button class="btn" id="randBtn" type="button">Otra frase</button>
+      </div>
+      <p class="note">Es un prototipo que suena en tu navegador. En el robot sonará por los altavoces del iPhone y será la mente quien elija la emoción y la frase.</p>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="s-3d">
+  <div class="prose stack">
+    <div class="eyebrow">Diseño 3D · versión iPhone</div>
+    <h2 id="s-3d">La carcasa</h2>
+    <p>La cabeza abraza el iPhone en horizontal. El teléfono entra por detrás y una tapa con ventana lo empuja contra el marco. Detrás queda un hueco de 14 mm que hace de chimenea: el aire entra por las rejillas de abajo, sube por detrás del iPhone y sale por arriba, para que no se caliente al pensar.</p>
+    <p>Las ranuras de arriba y de abajo dejan libres los botones, y por la izquierda sale el cable. El cuello está inclinado 10° para que Bip mire un poco hacia arriba, hacia ti. La base es una caja con sitio para una batería externa, que además le da peso para que no vuelque al tocar la pantalla.</p>
+  </div>
+  <div class="bench">
+    <div class="viewer" id="viewer">
+      <div class="fallback" id="vfallback">Cargando el modelo 3D…</div>
+      <div class="hint">arrastra para girar · rueda o pellizco para acercar</div>
+    </div>
+    <div class="vctl">
+      <label class="row" for="explode"><span class="eyebrow">Despiece</span> <input id="explode" type="range" min="0" max="100" value="0"></label>
+      <button class="btn" id="showDev" type="button" aria-pressed="true">iPhone y batería visibles</button>
+      <button class="btn" id="spinBtn" type="button" aria-pressed="true">Girar solo</button>
+    </div>
+    <div class="legend" id="legend"></div>
+  </div>
+  <div class="tbl">
+    <table class="wide">
+      <thead><tr><th>Archivo</th><th>Qué es</th><th>Orientación</th><th class="num">Tamaño (mm)</th><th class="num">PLA aprox.</th></tr></thead>
+      <tbody>
+        <tr><td class="file">1_cabeza.stl</td><td>Marco del iPhone con ranuras para botones, salida del cable y chimenea</td><td>Cara frontal abajo</td><td class="num">160 × 94 × 24</td><td class="num">55 g</td></tr>
+        <tr><td class="file">2_tapa_trasera.stl</td><td>Tapa con ventana: empuja el iPhone y deja salir el calor</td><td>Cara de fuera abajo</td><td class="num">160 × 94 × 16</td><td class="num">26 g</td></tr>
+        <tr><td class="file">3_antena_x2.stl</td><td>Antena con bola (imprime 2)</td><td>Bola abajo</td><td class="num">9 × 9 × 33</td><td class="num">2 g</td></tr>
+        <tr><td class="file">4_cuello.stl</td><td>Cuello con dos espigas</td><td>De pie</td><td class="num">26 × 26 × 40</td><td class="num">8 g</td></tr>
+        <tr><td class="file">5_base.stl</td><td>Caja para la batería externa, con salida de cables detrás</td><td>Boca abajo</td><td class="num">168 × 96 × 42</td><td class="num">98 g</td></tr>
+        <tr><td class="file">6_suelo_base.stl</td><td>Suelo que cierra la base a presión, con huecos para tacos de goma</td><td>Plano</td><td class="num">168 × 96 × 7</td><td class="num">42 g</td></tr>
+      </tbody>
+      <tfoot><tr><td colspan="3">Total · PLA 1,75 mm · capa 0,2 mm · 3 perímetros · relleno 20 % · sin soportes · cabe en camas de 180 mm</td><td class="num">≈ 15 h</td><td class="num">≈ 230 g</td></tr></tfoot>
+    </table>
+  </div>
+  <p class="note prose">Gramos y horas son una cuenta a ojo a partir del volumen de cada pieza. Las medidas del iPhone salen de la ficha de Apple (146,7 × 71,5 × 7,8 mm), pero la posición exacta de los botones y de la cámara trasera es aproximada. Antes de imprimir la cabeza, mide con una regla dónde empiezan y acaban los botones; si algo no cuadra, se cambia un número en el script y se regeneran las piezas. Esta página no puede descargar archivos: los STL y el script van aparte.</p>
+</section>
+
+<section aria-labelledby="s-compra">
+  <div class="prose stack">
+    <div class="eyebrow">Precios de noviembre de 2026, aproximados</div>
+    <h2 id="s-compra">Lista de la compra</h2>
+    <p>Como el iPhone ya trae todo lo electrónico, la lista es corta. Lo único que de verdad necesitas es imprimir las piezas y un cable; la batería es para cuando quieras llevártelo.</p>
+  </div>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Qué</th><th>Para qué sirve</th><th>Dónde</th><th class="num">Precio</th></tr></thead>
+      <tbody>
+        <tr><td><b>iPhone 14</b></td><td>El robot entero: cara, ojos, oídos, voz, sensores y cerebro</td><td>Ya lo tienes</td><td class="num">0 €</td></tr>
+        <tr><td>Cable Lightning en codo, 0,5–1 m</td><td>El conector en ángulo queda más limpio en el lateral de la cabeza</td><td>Amazon, tiendas de electrónica</td><td class="num">6–10 €</td></tr>
+        <tr><td>Cargador USB de 20 W</td><td>Para tenerlo siempre enchufado en casa</td><td>Reutiliza uno</td><td class="num">0 €</td></tr>
+        <tr><td>Impresión de las 6 piezas</td><td>La carcasa (≈ 230 g de PLA)</td><td>Amigo, biblioteca o espacio maker / servicio online</td><td class="num">5–45 €</td></tr>
+        <tr><td>4 tacos de goma de 10 mm</td><td>Que no resbale; van en los huecos del suelo</td><td>Ferretería o bazar</td><td class="num">2 €</td></tr>
+        <tr><td>Batería externa 10.000 mAh fina <span class="tag opt">modo portátil</span></td><td>Que dure fuera de casa. Hasta 160 × 88 × 24 mm, mejor si permite cargar mientras da carga</td><td>Amazon, grandes superficies</td><td class="num">15–25 €</td></tr>
+        <tr><td>Programa de desarrolladores de Apple <span class="tag opt">opcional</span></td><td>Para no tener que reinstalar la app cada 7 días</td><td>developer.apple.com</td><td class="num">99 €/año</td></tr>
+      </tbody>
+      <tfoot><tr><td colspan="3">Total sin opcionales · con la batería portátil, unos 20 € más</td><td class="num">≈ 10–60 €</td></tr></tfoot>
+    </table>
+  </div>
+  <div class="prose stack">
+    <h3>Herramientas</h3>
+    <p>Ni soldador ni multímetro. Basta con una lima de uñas o lija fina para repasar los encajes y pegamento instantáneo por si las antenas quedan flojas. Para el software, tu PC con Windows: no hace falta un Mac.</p>
+  </div>
+</section>
+
+<section aria-labelledby="s-montaje">
+  <div class="prose stack">
+    <div class="eyebrow">Unos 30 minutos</div>
+    <h2 id="s-montaje">Montaje paso a paso</h2>
+  </div>
+  <ol class="build prose">
+    <li><div><h3>Prepara el iPhone</h3><p>Haz copia si hace falta, actualiza iOS y quita la SIM. En Ajustes, pon el bloqueo automático en «Nunca», activa la carga optimizada y desactiva las notificaciones.</p><p class="check"><b>Está bien si</b> la pantalla no se apaga sola y no llega ningún aviso.</p></div></li>
+    <li><div><h3>Repasa las piezas impresas</h3><p>Quita los hilillos de plástico. Si el cuello entra muy justo, lija un poco la espiga, no el agujero.</p><p class="check"><b>Está bien si</b> el cuello entra con presión firme, sin martillo.</p></div></li>
+    <li><div><h3>Mete el iPhone en la cabeza</h3><p>Por detrás, con la pantalla hacia la ventana. Visto de frente, el conector va a la izquierda y la muesca de la cámara a la derecha.</p><p class="check"><b>Está bien si</b> los botones de volumen quedan en la ranura de arriba y el botón lateral en la de abajo, sin que nada los apriete, y la muesca se ve entera.</p></div></li>
+    <li><div><h3>Cierra con la tapa trasera</h3><p>Entra a presión: los nervios pequeños del marco se aplastan un poco y la sujetan. Para abrirla, mete la uña en la muesca de abajo.</p><p class="check"><b>Está bien si</b> el iPhone no baila al mover la cabeza y la cámara trasera queda libre, en su hueco.</p></div></li>
+    <li><div><h3>Pon las antenas</h3><p>Empuja cada una en su agujero de arriba. Si bailan, una gota de pegamento.</p></div></li>
+    <li><div><h3>Monta el cuello</h3><p>La espiga larga va a la base. La corta va a la cabeza, con la cara inclinada del cuello mirando hacia delante.</p><p class="check"><b>Está bien si</b> la cabeza mira un poco hacia arriba, no hacia el suelo.</p></div></li>
+    <li><div><h3>Batería o peso en la base</h3><p>Mete la batería externa, cierra el suelo a presión y pega los tacos de goma. Si no usas batería, pon unos 150 g de monedas para que tenga peso.</p><p class="check"><b>Está bien si</b> puedes tocar la pantalla sin que se vaya hacia atrás.</p></div></li>
+    <li><div><h3>Pasa el cable</h3><p>Enchufa el cable en codo por el lateral izquierdo de la cabeza y bájalo por detrás del cuello. Llega a la batería por la ranura trasera de la base, o directamente al cargador si está en casa.</p></div></li>
+  </ol>
+</section>
+
+<section aria-labelledby="s-mac">
+  <div class="prose stack">
+    <div class="eyebrow">Sin Mac</div>
+    <h2 id="s-mac">Cómo llega la app al iPhone</h2>
+    <p>Las apps de iPhone se compilan con herramientas de Apple que solo funcionan en Mac. La forma de saltarse eso sin comprar uno es alquilar un Mac en la nube unos minutos cada vez, gratis, a través de GitHub.</p>
+  </div>
+  <ol class="steps prose">
+    <li><span><b>Claude Code escribe la app en tu PC.</b> Está hecha con React Native, un sistema que permite programar apps de iPhone desde Windows.</span></li>
+    <li><span><b>GitHub la compila en un Mac en la nube.</b> Es gratis si el proyecto es público; si es privado, el plan gratuito da para unas 15 compilaciones al mes.</span></li>
+    <li><span><b>Sideloadly, en tu PC, la firma con tu Apple ID y la instala</b> en el iPhone por cable. La primera vez hay que activar el «Modo de desarrollador» en los ajustes del iPhone.</span></li>
+    <li><span><b>Con un Apple ID gratuito, la firma caduca a los 7 días</b> y Sideloadly la renueva. Si se hace pesado, el programa de desarrolladores de Apple (99 €/año) la alarga a un año.</span></li>
+  </ol>
+  <p class="note prose">Solo hay que recompilar cuando añadimos piezas nuevas a la app. Mientras ajustamos su carácter, los cambios llegan al iPhone al momento por WiFi.</p>
+</section>
+
+<section aria-labelledby="s-soft">
+  <div class="prose stack">
+    <div class="eyebrow">Lo escribimos juntos con Claude Code</div>
+    <h2 id="s-soft">El software, por fases</h2>
+    <p>Yo escribo el código y preparo cada versión; tú la instalas, la pruebas y me cuentas qué ves. Cada fase termina con una prueba sencilla, así sabemos que funciona antes de seguir. Los tiempos son orientativos.</p>
+  </div>
+  <ol class="phases prose">
+    <li class="phase"><div class="ph">Fase 1<small>1 tarde</small></div><div><h3>El taller y el primer parpadeo</h3><p>Montamos el proyecto, la compilación en GitHub y Sideloadly. La primera app solo dibuja sus ojos y pita.</p><p class="check"><b>Prueba:</b> Bip parpadea y pita en tu iPhone cuando le tocas la pantalla.</p></div></li>
+    <li class="phase"><div class="ph">Fase 2<small>1–2 tardes</small></div><div><h3>Instinto</h3><p>Con la cámara frontal y la visión de Apple te ve y te sigue con la mirada. Con el acelerómetro se asusta si lo mueves, vibra con las caricias y se adormece con poca luz.</p><p class="check"><b>Prueba:</b> te mueves por delante y te sigue con los ojos.</p></div></li>
+    <li class="phase"><div class="ph">Fase 3<small>1–2 tardes</small></div><div><h3>Oído y voz</h3><p>Whisper, dentro del iPhone, pasa tu voz a texto en español. Bip contesta en pitidos con subtítulos.</p><p class="check"><b>Prueba:</b> le dices «hola, Bip» y te contesta.</p></div></li>
+    <li class="phase"><div class="ph">Fase 4<small>2 tardes</small></div><div><h3>Mente</h3><p>Gemma 4 E2B, dentro del iPhone: describe lo que ve, entiende lo que le dices y elige qué cara poner y qué decir.</p><p class="check"><b>Prueba:</b> le enseñas una taza y te pregunta por ella.</p></div></li>
+    <li class="phase"><div class="ph">Fase 5<small>2–3 tardes</small></div><div><h3>Memoria y vida propia</h3><p>Lo que lo hace inteligente. Un diario y fichas de personas y cosas; un ánimo con energía, curiosidad y ganas de compañía; un repaso cada pocos minutos para decidir si hace algo. Y unas normas de respeto: no interrumpir si hablas por teléfono, horario de silencio y modo privado.</p><p class="check"><b>Prueba:</b> durante un día, sin hablarle, hace al menos tres cosas por iniciativa propia que tienen sentido.</p></div></li>
+    <li class="phase"><div class="ph">Fase 6<small>1 tarde</small></div><div><h3>Modo portátil</h3><p>Cuando funciona con batería, baja el brillo, piensa menos a menudo y avisa cuando le queda poca.</p><p class="check"><b>Prueba:</b> aguanta una tarde fuera de casa.</p></div></li>
+    <li class="phase"><div class="ph">Fase 7<small>opcional</small></div><div><h3>Más cuerpo</h3><p>Un cuello que gira hacia quien habla, con un servo y una placa ESP32 por Bluetooth (unos 10 €). O, en casa, consultar un modelo más grande en tu PC por WiFi.</p></div></li>
+  </ol>
+</section>
+
+<section aria-labelledby="s-cerebro">
+  <div class="prose stack">
+    <div class="eyebrow">IA local · 0 € al mes</div>
+    <h2 id="s-cerebro">La mente dentro del iPhone</h2>
+    <p>El iPhone 14 tiene 6 GB de memoria y un chip con aceleración para IA. Cabe un modelo pequeño pero espabilado que entiende texto e imágenes. El truco para que no se agote ni se caliente es que no esté pensando todo el rato: los reflejos son instantáneos y casi no gastan, y la mente solo despierta cuando hay algo que entender.</p>
+  </div>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Función</th><th>Modelo local</th><th>Cómo va en un iPhone 14</th></tr></thead>
+      <tbody>
+        <tr><td>Reflejos: ver caras y personas</td><td>Visión de Apple (viene con iOS)</td><td>Al instante, casi sin gastar</td></tr>
+        <tr><td>Oír: voz a texto</td><td>Whisper</td><td>Frases cortas en uno o dos segundos (a ojo)</td></tr>
+        <tr><td>Ver y pensar: describir, entender y decidir</td><td>Gemma 4 E2B, con aceleración gráfica</td><td>Ocupa 1–1,5 GB y escribe unos 12–26 tokens por segundo; una frase corta en 1–3 s</td></tr>
+        <tr><td>Memoria: diario y fichas</td><td>Base de datos dentro del iPhone</td><td>Al instante</td></tr>
+        <tr><td>Hablar</td><td>Pitidos generados al momento, sin modelo</td><td>Al instante</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note prose">Gemma 4 E4B, el hermano mayor, no cabe en los 6 GB del iPhone 14. Si un día quieres más cabeza, en casa Bip puede consultar un modelo más grande en tu PC por WiFi y, fuera, seguir con el suyo.</p>
+  <div class="calc" aria-label="Cálculo aproximado de la duración de la batería">Cuenta a ojo de la batería:
+  Batería del iPhone 14             ≈ 12,7 Wh
+  Bip despierto gasta               ≈ 2–4 W   →  3–5 h solo con el iPhone
+  Batería externa de 10.000 mAh     ≈ 37 Wh, unos 25 Wh útiles  →  6–12 h más
+  Si piensa mucho seguido gasta más; dormido, mucho menos.</div>
+</section>
+
+<section aria-labelledby="s-calor">
+  <div class="prose stack">
+    <div class="eyebrow">Para que dure años</div>
+    <h2 id="s-calor">Calor y batería</h2>
+    <ul class="plain">
+      <li>Un iPhone pensando se calienta. La chimenea de la cabeza ayuda, y Bip se cansa y piensa menos cuando iOS avisa de que el teléfono está caliente.</li>
+      <li>Si está siempre enchufado al 100 %, la batería envejece. Activa la carga optimizada; el iPhone 14 no tiene el límite al 80 % de los modelos más nuevos.</li>
+      <li>Si alguna vez ves que la pantalla se levanta o el teléfono se abomba, desenchúfalo y no lo uses: es la batería hinchándose.</li>
+      <li>No lo dejes al sol ni tapes las rejillas de arriba y abajo.</li>
+    </ul>
+  </div>
+</section>
+
+<section aria-labelledby="s-alt">
+  <div class="prose stack">
+    <div class="eyebrow">Por qué el iPhone</div>
+    <h2 id="s-alt">Lo que comparé antes de elegir</h2>
+  </div>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Opción</th><th class="num">Precio aprox.</th><th>Qué tiene a favor y en contra</th></tr></thead>
+      <tbody>
+        <tr><td><b>iPhone 14 que ya tienes</b> <span class="tag opt">elegida</span></td><td class="num">0 €</td><td>Mejor pantalla, cámara, micrófonos y cerebro que cualquier placa de este precio, y cabe una IA local dentro. En contra: no se le puede quitar iOS y se aprende menos electrónica.</td></tr>
+        <tr><td>M5Stack CoreS3 Lite</td><td class="num">45–55 €</td><td>El plan B: cajita con pantalla, cámara y sensores, sin soldar. Su chip no puede con una mente, así que necesitaría el PC encendido. Sus piezas 3D quedan guardadas.</td></tr>
+        <tr><td>Raspberry Pi 5 + pantalla + cámara</td><td class="num">120–170 €</td><td>Linux completo y una IA local más lenta que en el iPhone. Más piezas y más caro.</td></tr>
+        <tr><td>StackChan oficial de M5Stack</td><td class="num">≈ 99 $ + envío</td><td>Viene casi hecho, con dos motores. Aprendes menos y la IA va en la nube.</td></tr>
+        <tr><td>Reachy Mini</td><td class="num">300–450 $</td><td>Cabeza con motores y sin pantalla. Precioso, pero fuera del presupuesto y no tiene cara.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section aria-labelledby="s-priv">
+  <div class="prose stack">
+    <div class="eyebrow">Cámara y micrófono en casa</div>
+    <h2 id="s-priv">Privacidad</h2>
+    <ul class="plain">
+      <li>Nada sale del iPhone: los modelos funcionan dentro y Bip no necesita internet para vivir.</li>
+      <li>Las fotos no se guardan: se queda solo la descripción en texto en su diario.</li>
+      <li>Cuando mira o escucha con atención, sus ojos lo muestran con un brillo distinto.</li>
+      <li>Si le tapas la cámara con la mano unos segundos, entra en modo privado y se duerme.</li>
+    </ul>
+  </div>
+</section>
+
+<section aria-labelledby="s-ref">
+  <div class="prose stack">
+    <div class="eyebrow">Para seguir leyendo</div>
+    <h2 id="s-ref">Referencias</h2>
+    <ul class="src">
+      <li><a href="https://askloci.ai/speed/iphone-13/gemma-4-e2b/">Velocidad de Gemma 4 E2B en iPhone 13 y 14 (Loci)</a></li>
+      <li><a href="https://dev.to/alichherawalla/how-to-run-gemma-4-on-your-iphone-in-2026-completely-offline-no-subscription-i98">Cómo ejecutar Gemma 4 en un iPhone sin conexión</a></li>
+      <li><a href="https://github.com/mybigday/llama.rn">llama.rn: modelos locales con visión en apps de React Native</a></li>
+      <li><a href="https://github.com/adro0303/ipa-builder">ipa-builder: compilar apps de iPhone en GitHub sin Mac</a></li>
+      <li><a href="https://huggingface.co/Cactus-Compute">Cactus Compute: modelos diminutos de voz y visión para dispositivos</a></li>
+      <li><a href="https://github.com/slvDev/esp32-ai">esp32-ai: un modelo de lenguaje de 29 millones de parámetros dentro de un ESP32-S3</a></li>
+      <li><a href="https://github.com/asinformatico/Tiny_ESP32_Neural_Terminal">Tiny ESP32 Neural Terminal: un transformer diminuto en un ESP32-S3</a></li>
+      <li><a href="https://docs.m5stack.com/en/core/CoreS3-Lite">Ficha técnica del CoreS3 Lite (el plan B)</a></li>
+    </ul>
+  </div>
+</section>
+
+</div>
+
+<script>
+/* ========================================================= cara de Bip */
+const EMOS = {
+  neutral:     {label:"Tranquilo",   w:60, h:74, r:20, dy:0,  happy:0, sad:0, asym:0, lx:0,  ly:0,  sleep:0, think:0},
+  contento:    {label:"Contento",    w:66, h:66, r:24, dy:-2, happy:1, sad:0, asym:0, lx:0,  ly:-2, sleep:0, think:0},
+  curioso:     {label:"Curioso",     w:60, h:74, r:20, dy:0,  happy:0, sad:0, asym:1, lx:12, ly:-4, sleep:0, think:0},
+  sorprendido: {label:"Sorprendido", w:68, h:90, r:34, dy:-4, happy:0, sad:0, asym:0, lx:0,  ly:0,  sleep:0, think:0},
+  triste:      {label:"Triste",      w:58, h:62, r:18, dy:12, happy:0, sad:1, asym:0, lx:0,  ly:8,  sleep:0, think:0},
+  pensando:    {label:"Pensando",    w:56, h:60, r:18, dy:-6, happy:0, sad:0, asym:.4,lx:16, ly:-12,sleep:0, think:1},
+  sueno:       {label:"Con sueño",   w:62, h:6,  r:3,  dy:10, happy:0, sad:0, asym:0, lx:0,  ly:0,  sleep:1, think:0},
+};
+const GLOW = "#4FE3C1", BG = "#05080B";
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+class Face {
+  constructor(){
+    this.p = {...EMOS.neutral}; this.target = EMOS.neutral; this.emo = "neutral";
+    this.blink = 1; this.nextBlink = performance.now() + 1500; this.blinkT = -1;
+    this.look = [0,0]; this.lookT = [0,0]; this.nextLook = 0;
+    this.sub = ""; this.subShown = 0; this.subUntil = 0;
+    this.speech = null; // {start, sylls:[{t,d}], text}
+  }
+  set(emo){ if(EMOS[emo]){ this.emo = emo; this.target = EMOS[emo]; } }
+  say(text, speech){ this.sub = text; this.speech = speech; this.subUntil = (speech ? speech.end : performance.now()+2500) + 2600; }
+  amp(now){
+    const s = this.speech; if(!s) return 0;
+    for(const y of s.sylls){ if(now >= y.t && now <= y.t + y.d){ const k=(now-y.t)/y.d; return Math.sin(Math.PI*k) * (0.55 + 0.45*y.v); } }
+    return 0;
+  }
+  update(now){
+    for(const k in this.target){ if(typeof this.target[k]==="number") this.p[k] += (this.target[k]-this.p[k])*0.16; }
+    if(this.blinkT < 0 && now > this.nextBlink && this.p.sleep < .5){ this.blinkT = now; }
+    if(this.blinkT >= 0){
+      const k = (now - this.blinkT)/170;
+      this.blink = k < .5 ? 1 - k*1.85 : Math.min(1, .075 + (k-.5)*1.85);
+      if(k >= 1){ this.blinkT = -1; this.blink = 1; this.nextBlink = now + 1800 + Math.random()*3600; }
+    }
+    if(now > this.nextLook){
+      this.lookT = reduceMotion ? [0,0] : [(Math.random()*2-1)*9, (Math.random()*2-1)*5];
+      this.nextLook = now + 1200 + Math.random()*2800;
+    }
+    this.look[0] += (this.lookT[0]-this.look[0])*0.08; this.look[1] += (this.lookT[1]-this.look[1])*0.08;
+    if(this.speech && now > this.speech.end + 50) this.speech = null;
+  }
+  draw(ctx, W, H, now){
+    const s = H/240; const p = this.p;
+    const LW = W/s, MX = LW/2;               // ancho lógico: 320 en 4:3, ~520 en el iPhone
+    ctx.setTransform(1,0,0,1,0,0); ctx.fillStyle = BG; ctx.fillRect(0,0,W,H);
+    ctx.setTransform(s,0,0,s,0,0);
+    const a = this.amp(now);
+    const bob = a*3;
+    const cy = 104 + p.dy + p.ly*.6 + this.look[1] - bob;
+    const cx0 = MX + p.lx*1.4 + this.look[0]*1.6;
+    const gap = Math.min(92, 54 * Math.max(1, LW/320));
+    for(const side of [-1,1]){
+      let w = p.w, h = p.h * this.blink;
+      if(p.asym){ const k = side<0 ? 1+.14*p.asym : 1-.16*p.asym; w*=k; h*=k; }
+      h = Math.max(h, 3.5);
+      const cx = cx0 + side*gap, y0 = cy - h/2;
+      ctx.save();
+      ctx.shadowColor = GLOW; ctx.shadowBlur = 16; ctx.fillStyle = GLOW;
+      roundRect(ctx, cx - w/2, y0, w, h, Math.min(p.r, h/2, w/2)); ctx.fill();
+      ctx.restore();
+      ctx.fillStyle = BG;
+      if(p.happy > .02){ // ojos en arco
+        ctx.beginPath(); ctx.ellipse(cx, cy + h*(1.25 - .62*p.happy), w*.8, h*.62, 0, 0, Math.PI*2); ctx.fill();
+      }
+      if(p.sad > .02){ // párpado caído hacia fuera
+        ctx.beginPath();
+        const ox = cx + side*(w/2+3), ix = cx - side*(w/2+3);
+        ctx.moveTo(ox, y0-3); ctx.lineTo(ix, y0-3); ctx.lineTo(ix, y0-3 + h*.08); ctx.lineTo(ox, y0 + h*.55*p.sad); ctx.closePath(); ctx.fill();
+      }
+      if(p.asym > .5 && side > 0){ ctx.fillRect(cx - w/2 - 3, y0 - 3, w + 6, h*.22 + 3); }
+    }
+    if(p.think > .5){
+      const t = now/380;
+      for(let i=0;i<3;i++){ ctx.globalAlpha = .35 + .65*Math.max(0, Math.sin(t - i*.7)); ctx.fillStyle = GLOW;
+        ctx.beginPath(); ctx.arc(MX - 14 + i*14, 176, 3.4, 0, Math.PI*2); ctx.fill(); }
+      ctx.globalAlpha = 1;
+    }
+    if(p.sleep > .5){
+      ctx.fillStyle = GLOW; ctx.font = "600 16px 'Chakra Petch', sans-serif";
+      const t = (now/1600)%1;
+      const zx = MX + gap + 22;
+      ctx.globalAlpha = 1 - t; ctx.fillText("z", zx + t*14, 70 - t*26);
+      ctx.globalAlpha = 1 - ((t+.5)%1); ctx.fillText("z", zx + 12 + ((t+.5)%1)*14, 62 - ((t+.5)%1)*26);
+      ctx.globalAlpha = 1;
+    }
+    // barra de voz
+    if(a > 0.01){
+      ctx.fillStyle = GLOW;
+      for(let i=0;i<9;i++){
+        const hh = 2 + a*14*Math.abs(Math.sin(now/55 + i*1.3));
+        ctx.globalAlpha = .85; ctx.fillRect(MX - 36 + i*8.4, 190 - hh/2, 4.4, hh);
+      }
+      ctx.globalAlpha = 1;
+    }
+    // subtítulo
+    if(this.sub && now < this.subUntil){
+      const total = this.sub.length;
+      let n = total;
+      if(this.speech){ const k = (now - this.speech.start)/(this.speech.end - this.speech.start); n = Math.max(0, Math.min(total, Math.ceil(k*total*1.05))); }
+      const txt = this.sub.slice(0, n);
+      const fade = Math.min(1, (this.subUntil - now)/600);
+      ctx.globalAlpha = fade; ctx.fillStyle = "#D8F7EE"; ctx.font = "500 12.5px 'IBM Plex Mono', monospace"; ctx.textAlign = "center";
+      wrapText(ctx, txt, MX, 214, Math.min(LW - 70, 420), 14);
+      ctx.textAlign = "start"; ctx.globalAlpha = 1;
+    }
+  }
+}
+function roundRect(ctx,x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+function wrapText(ctx, text, x, y, maxW, lh){
+  const words = text.split(" "); const lines = []; let line = "";
+  for(const w of words){ const t = line ? line + " " + w : w; if(ctx.measureText(t).width > maxW && line){ lines.push(line); line = w; } else line = t; }
+  if(line) lines.push(line);
+  const start = y - (lines.length-1)*lh;
+  lines.forEach((l,i)=>ctx.fillText(l, x, start + i*lh));
+}
+
+/* ========================================================= idioma de pitidos */
+const VOICE = {
+  neutral:     {base:640, spread:1.0, tempo:92,  wave:"square",   glide:.35, vib:0,  end:0},
+  contento:    {base:860, spread:1.35,tempo:78,  wave:"square",   glide:.55, vib:0,  end:.2},
+  curioso:     {base:720, spread:1.1, tempo:98,  wave:"square",   glide:.4,  vib:0,  end:.6},
+  sorprendido: {base:980, spread:1.5, tempo:84,  wave:"square",   glide:.7,  vib:0,  end:.4},
+  triste:      {base:400, spread:.7,  tempo:150, wave:"triangle", glide:.6,  vib:6,  end:-.5},
+  pensando:    {base:560, spread:.8,  tempo:120, wave:"triangle", glide:.3,  vib:9,  end:0},
+  sueno:       {base:300, spread:.5,  tempo:185, wave:"triangle", glide:.5,  vib:4,  end:-.6},
+};
+const SCALE = [0,2,4,7,9,12,14,16];
+let actx = null;
+function audio(){ if(!actx){ const AC = window.AudioContext || window.webkitAudioContext; if(!AC) return null; actx = new AC(); } if(actx.state === "suspended") actx.resume(); return actx; }
+function hash(str){ let h = 2166136261; for(let i=0;i<str.length;i++){ h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+function syllables(word){ const m = word.match(/[aeiouáéíóúü]+/g); return Math.max(1, m ? m.length : 1); }
+
+function planSpeech(text, emo){
+  const v = VOICE[emo] || VOICE.neutral;
+  const tokens = text.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").match(/[a-zñ0-9]+|[?!.,;:]/g) || [];
+  const notes = []; let t = 0.04;
+  const isQ = /\?\s*$/.test(text.trim()), isEx = /!\s*$/.test(text.trim());
+  tokens.forEach((tok, wi) => {
+    if(/[?!.,;:]/.test(tok)){ t += (tok === "," ? .12 : .2); return; }
+    const n = syllables(tok);
+    for(let i=0;i<n;i++){
+      const h = hash(tok + "#" + i);
+      const step = SCALE[h % SCALE.length];
+      const f = v.base * Math.pow(2, (step*v.spread)/12);
+      const d = (v.tempo * (0.75 + ((h>>4)%6)/10)) / 1000;
+      const shape = (h>>8)%3; // 0 plano, 1 sube, 2 baja
+      const glide = ((h>>11)%100)/100 < v.glide ? (shape===1 ? 1.32 : shape===2 ? .72 : 1) : 1;
+      notes.push({t, d, f, f2: f*glide, v: ((h>>14)%100)/100});
+      t += d + .025;
+    }
+    t += .07;
+  });
+  if(notes.length){
+    const last = notes[notes.length-1];
+    if(isQ){ last.f2 = last.f * 1.6; last.d *= 1.4; }
+    else if(v.end){ last.f2 = last.f * (1 + v.end*.5); last.d *= 1.3; }
+    if(isEx){ notes.forEach(n => { n.f *= 1.12; n.f2 *= 1.12; }); }
+  }
+  return {notes, dur: t};
+}
+function speak(face, text, emo){
+  face.set(emo);
+  const plan = planSpeech(text, emo);
+  const now = performance.now();
+  const sylls = plan.notes.map(n => ({t: now + n.t*1000, d: n.d*1000, v: n.v}));
+  face.say(text, {start: now, end: now + plan.dur*1000, sylls});
+  const ac = audio(); if(!ac) return;
+  const v = VOICE[emo] || VOICE.neutral;
+  const t0 = ac.currentTime + 0.02;
+  const master = ac.createGain(); master.gain.value = emo === "sueno" ? .09 : .13;
+  const lp = ac.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 3200; lp.Q.value = .7;
+  master.connect(lp); lp.connect(ac.destination);
+  plan.notes.forEach(n => {
+    const o = ac.createOscillator(); o.type = v.wave;
+    const g = ac.createGain();
+    const s = t0 + n.t, e = s + n.d;
+    o.frequency.setValueAtTime(n.f, s);
+    o.frequency.exponentialRampToValueAtTime(Math.max(60, n.f2), e);
+    if(v.vib){ const l = ac.createOscillator(); const lg = ac.createGain(); l.frequency.value = v.vib; lg.gain.value = n.f*.04; l.connect(lg); lg.connect(o.frequency); l.start(s); l.stop(e); }
+    g.gain.setValueAtTime(0, s); g.gain.linearRampToValueAtTime(.9, s + .008); g.gain.setValueAtTime(.9, e - .02); g.gain.linearRampToValueAtTime(0, e);
+    o.connect(g); g.connect(master); o.start(s); o.stop(e + .01);
+  });
+}
+
+/* ========================================================= cabecera + demo */
+function setupCanvas(id){ const c = document.getElementById(id); return {c, ctx: c.getContext("2d")}; }
+const hero = new Face(), demo = new Face();
+const heroC = setupCanvas("heroFace"), demoC = setupCanvas("demoFace");
+const tex = document.createElement("canvas"); tex.width = 1040; tex.height = 480; const texCtx = tex.getContext("2d");
+
+const SCRIPT = [
+  ["contento","¡Hola! Soy Bip."],
+  ["curioso","¿Qué es eso de la mesa?"],
+  ["pensando","Mmm… déjame pensar."],
+  ["sorprendido","¡Has llegado pronto!"],
+  ["triste","Hoy no ha venido nadie."],
+  ["contento","Llevas un buen rato. ¿Estiramos?"],
+  ["sueno","Buenas noches…"],
+];
+let si = 0, heroTimer = 0;
+function heroNext(now){
+  const [emo, text] = SCRIPT[si % SCRIPT.length]; si++;
+  hero.set(emo);
+  const plan = planSpeech(text, emo);
+  hero.say(text, {start: now, end: now + plan.dur*1000, sylls: plan.notes.map(n => ({t: now + n.t*1000, d: n.d*1000, v: n.v}))});
+  heroTimer = now + Math.max(4200, plan.dur*1000 + 3000);
+}
+document.getElementById("heroSpeak").addEventListener("click", () => {
+  const [emo, text] = SCRIPT[(si - 1 + SCRIPT.length) % SCRIPT.length];
+  speak(hero, text, emo); heroTimer = performance.now() + 6000;
+});
+
+let demoEmo = "curioso"; demo.set(demoEmo);
+const chips = document.getElementById("emoChips");
+Object.entries(EMOS).forEach(([k, e]) => {
+  const b = document.createElement("button"); b.type = "button"; b.className = "btn"; b.textContent = e.label; b.id = "emo-" + k;
+  b.setAttribute("aria-pressed", k === demoEmo ? "true" : "false");
+  b.addEventListener("click", () => {
+    demoEmo = k; demo.set(k);
+    chips.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b ? "true" : "false"));
+  });
+  chips.appendChild(b);
+});
+const sayText = document.getElementById("sayText");
+document.getElementById("sayBtn").addEventListener("click", () => { const t = sayText.value.trim() || "Bip bip"; speak(demo, t, demoEmo); });
+sayText.addEventListener("keydown", e => { if(e.key === "Enter"){ e.preventDefault(); document.getElementById("sayBtn").click(); } });
+const RAND = [
+  ["contento","¡Has vuelto! Te echaba de menos."],
+  ["curioso","¿Con quién hablabas por teléfono?"],
+  ["sorprendido","¡Qué susto! No me sacudas."],
+  ["triste","Se ha acabado la batería del mando…"],
+  ["pensando","Ayer me dijiste que hoy era el examen."],
+  ["sueno","Apago la luz y me duermo, ¿vale?"],
+  ["neutral","Llevas dos horas sin levantarte."],
+];
+let ri = 0;
+document.getElementById("randBtn").addEventListener("click", () => {
+  const [emo, text] = RAND[ri++ % RAND.length];
+  sayText.value = text; demoEmo = emo; demo.set(emo);
+  chips.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x.id === "emo-" + emo ? "true" : "false"));
+  speak(demo, text, emo);
+});
+
+const tickers = [];
+function loop(now){
+  if(now > heroTimer) heroNext(now);
+  hero.update(now); demo.update(now);
+  hero.draw(heroC.ctx, 1040, 480, now);
+  demo.draw(demoC.ctx, 1040, 480, now);
+  hero.draw(texCtx, 1040, 480, now);
+  tickers.forEach(f => f(now));
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+window.__bipTex = tex; window.__bipTickers = tickers;
+</script>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js";
+
+const DATA = /*__VIEWER_DATA__*/null;
+const host = document.getElementById("viewer");
+const fallback = document.getElementById("vfallback");
+try {
+  const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  host.prepend(renderer.domElement);
+  fallback.remove();
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(28, 1, 1, 5000);
+  camera.up.set(0,0,1);
+  camera.position.set(245, 450, 250);
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.target.set(0, -10, 92);
+  controls.enableDamping = true; controls.minDistance = 220; controls.maxDistance = 1400;
+  controls.autoRotate = !matchMedia("(prefers-reduced-motion: reduce)").matches; controls.autoRotateSpeed = 1.1;
+
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x8a94a3, 1.6));
+  const key = new THREE.DirectionalLight(0xffffff, 2.2); key.position.set(160, 260, 320); scene.add(key);
+  const rim = new THREE.DirectionalLight(0xffffff, .9); rim.position.set(-260, -200, 180); scene.add(rim);
+
+  // cama de impresora: rejilla de 10 mm
+  const css = getComputedStyle(document.documentElement);
+  const gridCol = () => new THREE.Color(getComputedStyle(document.documentElement).getPropertyValue("--grid").trim() || "#C9D1DA");
+  const grid = new THREE.GridHelper(320, 32, gridCol(), gridCol());
+  grid.rotation.x = Math.PI/2; scene.add(grid);
+
+  const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0)).buffer;
+  const meshes = [];
+  const legendSeen = new Map();
+  for(const p of DATA.parts){
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(b64(p.v)), 3));
+    g.setIndex(new THREE.BufferAttribute(p.i32 ? new Uint32Array(b64(p.i)) : new Uint16Array(b64(p.i)), 1));
+    const geo = toCreasedNormals(g, Math.PI/6);
+    const mat = new THREE.MeshStandardMaterial({color: p.color, roughness: p.kind === "device" ? .45 : .62, metalness: 0});
+    const m = new THREE.Mesh(geo, mat);
+    m.userData = {explode: new THREE.Vector3(...p.explode), kind: p.kind};
+    scene.add(m); meshes.push(m);
+    const label = {cabeza:"Cabeza", tapa:"Tapa trasera", iphone:"iPhone 14 (no se imprime)", antena:"Antenas", cuello:"Cuello", base:"Base", suelo:"Suelo de la base", bateria:"Batería externa (opcional)"}[p.name] || p.name;
+    if(!legendSeen.has(label)) legendSeen.set(label, p.color);
+  }
+  // pantalla con la cara
+  const T = new THREE.CanvasTexture(window.__bipTex); T.colorSpace = THREE.SRGBColorSpace;
+  const c = DATA.screen.corners.map(v => new THREE.Vector3(...v));
+  const sg = new THREE.BufferGeometry();
+  sg.setAttribute("position", new THREE.Float32BufferAttribute([...c[0].toArray(), ...c[1].toArray(), ...c[2].toArray(), ...c[3].toArray()], 3));
+  sg.setAttribute("uv", new THREE.Float32BufferAttribute([1,0, 0,0, 0,1, 1,1], 2));
+  sg.setIndex([0,2,1, 0,3,2]);
+  const screen = new THREE.Mesh(sg, new THREE.MeshBasicMaterial({map:T, side:THREE.DoubleSide}));
+  screen.userData = {explode: new THREE.Vector3(...DATA.screen.explode), kind:"device"};
+  scene.add(screen); meshes.push(screen);
+
+  const legend = document.getElementById("legend");
+  legendSeen.forEach((col, label) => { const s = document.createElement("span"); s.innerHTML = `<i style="background:${col}"></i>${label}`; legend.appendChild(s); });
+
+  const base = meshes.map(m => m.position.clone());
+  let ex = 0, exT = 0, showDev = true;
+  const slider = document.getElementById("explode");
+  slider.addEventListener("input", () => { exT = slider.value/100; });
+  const devBtn = document.getElementById("showDev");
+  devBtn.addEventListener("click", () => { showDev = !showDev; devBtn.setAttribute("aria-pressed", String(showDev)); devBtn.textContent = showDev ? "iPhone y batería visibles" : "iPhone y batería ocultos"; });
+  const spinBtn = document.getElementById("spinBtn");
+  spinBtn.setAttribute("aria-pressed", String(controls.autoRotate));
+  spinBtn.addEventListener("click", () => { controls.autoRotate = !controls.autoRotate; spinBtn.setAttribute("aria-pressed", String(controls.autoRotate)); });
+  controls.addEventListener("start", () => { controls.autoRotate = false; spinBtn.setAttribute("aria-pressed","false"); });
+
+  function size(){ const w = host.clientWidth, h = host.clientHeight; renderer.setSize(w, h, false); camera.aspect = w/h;
+    camera.fov = w < 520 ? 38 : 28; camera.updateProjectionMatrix(); }
+  new ResizeObserver(size).observe(host); size();
+
+  let visible = true;
+  new IntersectionObserver(es => { visible = es[0].isIntersecting; }).observe(host);
+  const themeObs = new MutationObserver(() => { const g = gridCol(); grid.material.color = g; });
+  themeObs.observe(document.documentElement, {attributes:true, attributeFilter:["data-theme"]});
+
+  window.__bipTickers.push(() => {
+    if(!visible) return;
+    ex += (exT - ex) * .12;
+    meshes.forEach((m, i) => { m.position.copy(base[i]).addScaledVector(m.userData.explode, ex); if(m.userData.kind === "device") m.visible = showDev; });
+    T.needsUpdate = true;
+    controls.update();
+    renderer.render(scene, camera);
+  });
+} catch(err) {
+  fallback.textContent = "Tu navegador no ha podido mostrar el modelo 3D. Los archivos STL se abren en cualquier programa de impresión (Cura, PrusaSlicer, Bambu Studio).";
+  console.error(err);
+}
+</script>

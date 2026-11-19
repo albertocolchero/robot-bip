@@ -1,0 +1,899 @@
+<title>Robot Bip</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Layout: guía de una columna (texto ~68ch) con "bancos de trabajo" más anchos para la cara, el visor 3D y las tablas. */
+:root{
+  --bg:#ECEFF2;
+  --surface:#F8F9FB;
+  --raised:#FFFFFF;
+  --ink:#17202B;
+  --muted:#566173;
+  --line:#D3D9E1;
+  --accent:#B4570B;
+  --accent-soft:#F5E4D2;
+  --glow:#4FE3C1;
+  --screen:#05080B;
+  --device:#2A2F37;
+  --device-edge:#3A414B;
+  --grid:#C9D1DA;
+  --f-display:"Chakra Petch","Segoe UI",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+  --r:10px;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0E1217; --surface:#151A21; --raised:#1A2029; --ink:#E3E8EE; --muted:#97A3B2;
+    --line:#29323D; --accent:#F2A03D; --accent-soft:#3A2A17; --device:#2A2F37; --device-edge:#454D59;
+    --grid:#2A333E; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0E1217; --surface:#151A21; --raised:#1A2029; --ink:#E3E8EE; --muted:#97A3B2;
+  --line:#29323D; --accent:#F2A03D; --accent-soft:#3A2A17; --device:#2A2F37; --device-edge:#454D59;
+  --grid:#2A333E; color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{
+  background:var(--bg); color:var(--ink); font-family:var(--f-body); font-size:16.5px; line-height:1.62;
+  padding-left:max(16px,env(safe-area-inset-left,0px)); padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0 64px;
+}
+.wrap{max-width:1080px;margin:0 auto}
+.prose{max-width:700px}
+h1,h2,h3{font-family:var(--f-display);line-height:1.15;text-wrap:balance;margin:0}
+h2{font-size:clamp(1.55rem,1.2rem + 1.2vw,2.05rem);font-weight:600;letter-spacing:.01em}
+h3{font-size:1.15rem;font-weight:600}
+p{margin:0}
+a{color:var(--accent);text-underline-offset:3px}
+a:focus-visible,button:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.eyebrow{font-family:var(--f-mono);font-size:.74rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.mono{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+section{padding-block:56px 8px;display:grid;gap:22px}
+section + section{border-top:1px solid var(--line)}
+.stack{display:grid;gap:14px}
+
+/* ---------- cabecera ---------- */
+.hero{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr);gap:40px;align-items:center;padding-block:44px 40px}
+.hero h1{font-size:clamp(3.4rem,2.4rem + 4vw,5.6rem);font-weight:700;letter-spacing:-.01em;line-height:.95}
+.hero h1 span{color:var(--accent)}
+.lede{font-size:1.18rem;line-height:1.55;max-width:34em}
+.facts{display:flex;flex-wrap:wrap;gap:10px 22px;margin-top:4px}
+.fact{display:grid;gap:0}
+.fact b{font-family:var(--f-display);font-size:1.35rem;font-weight:600}
+.fact small{font-size:.82rem;color:var(--muted)}
+.device-wrap{display:grid;justify-items:center;gap:12px}
+.device{
+  width:min(100%,360px);aspect-ratio:1/1;background:var(--device);border-radius:9%;
+  box-shadow:inset 0 0 0 2px var(--device-edge),0 18px 40px -18px rgba(10,14,20,.55);
+  display:grid;grid-template-rows:auto 1fr;justify-items:center;padding:8% 8% 0;position:relative;
+}
+.device .scr{width:100%;aspect-ratio:4/3;background:var(--screen);border-radius:3px;overflow:hidden}
+.device canvas{width:100%;height:100%;display:block}
+.device .cam{display:flex;align-items:center;gap:10px;align-self:center}
+.device .cam i{display:block;width:13px;height:13px;border-radius:50%;background:#0b0d10;box-shadow:inset 0 0 0 3px #1b2027}
+.device .cam em{display:block;width:16px;height:6px;border-radius:2px;background:#15191f}
+.device-cap{font-size:.8rem;color:var(--muted);text-align:center;max-width:300px}
+.btn{
+  font:500 .92rem/1 var(--f-body);color:var(--ink);background:var(--raised);border:1px solid var(--line);
+  padding:10px 14px;border-radius:8px;cursor:pointer;display:inline-flex;align-items:center;gap:8px;
+}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .btn.primary{color:#1a1206}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .btn.primary{color:#1a1206}}
+.btn[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft)}
+
+/* ---------- caja "tu primer paso" ---------- */
+.firststep{background:var(--raised);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:var(--r);padding:22px 24px;display:grid;gap:12px}
+.firststep h2{font-size:1.35rem}
+ol.steps{margin:0;padding:0;list-style:none;counter-reset:s;display:grid;gap:10px}
+ol.steps > li{counter-increment:s;display:grid;grid-template-columns:2rem 1fr;gap:10px;align-items:start}
+ol.steps > li::before{content:counter(s);font-family:var(--f-display);font-weight:700;font-size:1.05rem;color:var(--accent);
+  border:1.5px solid var(--accent);border-radius:50%;width:1.85rem;height:1.85rem;display:grid;place-items:center;line-height:1}
+
+/* ---------- capas ---------- */
+.layers{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.layer{background:var(--raised);border:1px solid var(--line);border-radius:var(--r);padding:18px;display:grid;gap:8px;align-content:start}
+.layer .where{font-family:var(--f-mono);font-size:.74rem;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+.layer ul{margin:0;padding-left:1.1em;display:grid;gap:4px;font-size:.95rem}
+.diagram{overflow-x:auto}
+.diagram svg{display:block;min-width:640px;width:100%;height:auto}
+.dg-box{fill:var(--raised);stroke:var(--line)}
+.dg-robot{fill:var(--accent-soft);stroke:var(--accent)}
+.dg-t{fill:var(--ink);font:600 14px var(--f-display)}
+.dg-s{fill:var(--muted);font:12px var(--f-body)}
+.dg-a{stroke:var(--muted);stroke-width:1.5;fill:none}
+.dg-ah{fill:var(--muted)}
+.dg-l{fill:var(--accent);font:500 11.5px var(--f-mono)}
+
+/* ---------- un día ---------- */
+.day{display:grid;gap:0;margin:0;padding:0;list-style:none;border-left:2px solid var(--line);margin-left:6px}
+.day li{display:grid;grid-template-columns:4.2rem 1fr;gap:14px;padding:10px 0 10px 18px;position:relative}
+.day li::before{content:"";position:absolute;left:-7px;top:17px;width:12px;height:12px;border-radius:50%;background:var(--bg);border:2px solid var(--accent)}
+.day time{font-family:var(--f-mono);font-weight:500;color:var(--accent);padding-top:1px}
+.day .say{font-family:var(--f-mono);font-size:.88rem;color:var(--muted)}
+
+/* ---------- banco: cara + voz ---------- */
+.bench{background:var(--raised);border:1px solid var(--line);border-radius:14px;padding:20px;display:grid;gap:18px}
+.voice{display:grid;grid-template-columns:minmax(0,.95fr) minmax(0,1.05fr);gap:24px;align-items:start}
+.voice .scr-big{background:var(--device);border-radius:14px;padding:14px;box-shadow:inset 0 0 0 2px var(--device-edge)}
+.voice .scr-big canvas{width:100%;aspect-ratio:4/3;display:block;background:var(--screen);border-radius:4px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.field{display:grid;gap:6px}
+.field label{font-size:.85rem;color:var(--muted)}
+.field input{font:1rem var(--f-body);color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 12px;width:100%}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.note{font-size:.88rem;color:var(--muted)}
+
+/* ---------- visor 3D ---------- */
+.viewer{position:relative;border-radius:12px;overflow:hidden;background:var(--surface);border:1px solid var(--line);aspect-ratio:16/10;min-height:300px}
+.viewer canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
+.viewer .hint{position:absolute;left:12px;bottom:10px;font-family:var(--f-mono);font-size:.74rem;color:var(--muted);pointer-events:none}
+.viewer .fallback{position:absolute;inset:0;display:grid;place-items:center;padding:20px;text-align:center;color:var(--muted)}
+.vctl{display:flex;flex-wrap:wrap;gap:12px 20px;align-items:center}
+.vctl input[type=range]{accent-color:var(--accent);width:180px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:.86rem}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:12px;height:12px;border-radius:3px;display:inline-block;border:1px solid var(--line)}
+
+/* ---------- tablas ---------- */
+.tbl{overflow-x:auto;border:1px solid var(--line);border-radius:var(--r);background:var(--raised)}
+table{border-collapse:collapse;width:100%;min-width:680px;font-size:.93rem}
+table.wide{min-width:820px}
+td.file{font-family:var(--f-mono);white-space:nowrap}
+th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-family:var(--f-mono);font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:500;background:var(--surface)}
+tr:last-child td{border-bottom:0}
+td.num,th.num{text-align:right;font-family:var(--f-mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+tfoot td{font-weight:600;background:var(--surface)}
+.tag{display:inline-block;font-family:var(--f-mono);font-size:.7rem;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border-radius:99px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+.tag.opt{border-color:var(--accent);color:var(--accent)}
+
+/* ---------- montaje y fases ---------- */
+ol.build{margin:0;padding:0;list-style:none;counter-reset:b;display:grid;gap:14px}
+ol.build > li{counter-increment:b;display:grid;grid-template-columns:2.6rem 1fr;gap:14px;background:var(--raised);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px}
+ol.build > li::before{content:counter(b,decimal-leading-zero);font-family:var(--f-display);font-weight:700;font-size:1.3rem;color:var(--accent);line-height:1.2}
+ol.build h3{margin-bottom:4px}
+.check{font-size:.9rem;color:var(--muted);margin-top:6px}
+.check b{color:var(--ink);font-weight:600}
+.phases{display:grid;gap:12px;margin:0;padding:0;list-style:none}
+.phase{display:grid;grid-template-columns:5.4rem 1fr;gap:16px;padding:16px 0;border-bottom:1px dashed var(--line)}
+.phase:last-child{border-bottom:0}
+.phase .ph{font-family:var(--f-display);font-weight:700;font-size:1.05rem;color:var(--accent);line-height:1.2}
+.phase .ph small{display:block;font-family:var(--f-mono);font-weight:400;font-size:.72rem;color:var(--muted);letter-spacing:.04em;margin-top:4px}
+.phase p + p{margin-top:6px}
+
+/* ---------- cerebro ---------- */
+.brains{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.brain{background:var(--raised);border:1px solid var(--line);border-radius:var(--r);padding:18px;display:grid;gap:8px;align-content:start}
+.brain.rec{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.brain .tag{justify-self:start}
+.brain .cost{font-family:var(--f-display);font-size:1.5rem;font-weight:600}
+.brain .cost small{font-family:var(--f-body);font-size:.85rem;font-weight:400;color:var(--muted)}
+.calc{font-family:var(--f-mono);font-size:.86rem;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;line-height:1.7}
+ul.plain{margin:0;padding-left:1.1em;display:grid;gap:6px}
+.src{font-size:.88rem;display:grid;gap:4px;margin:0;padding-left:1.1em}
+
+@media (max-width:860px){
+  .hero{grid-template-columns:1fr;gap:28px}
+  .layers,.brains{grid-template-columns:1fr}
+  .voice{grid-template-columns:1fr}
+}
+@media (max-width:520px){
+  body{font-size:16px}
+  .phase{grid-template-columns:1fr;gap:6px}
+  ol.build > li{grid-template-columns:1fr;gap:6px}
+  .day li{grid-template-columns:1fr;gap:2px}
+  .viewer{aspect-ratio:4/5}
+}
+@media (prefers-reduced-motion: reduce){*{scroll-behavior:auto}}
+</style>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="stack">
+    <div class="eyebrow">Proyecto de robótica para empezar desde cero</div>
+    <h1>Bip<span>.</span></h1>
+    <p class="lede">Un droide de escritorio que mira, escucha, recuerda y te habla con pitidos. Tiene una sola pieza electrónica, no hay que soldar nada y la carcasa se imprime en 3D.</p>
+    <div class="facts" aria-label="Datos clave">
+      <div class="fact"><b class="mono">60–80 €</b><small>todo, cuenta a ojo</small></div>
+      <div class="fact"><b class="mono">0 €/mes</b><small>IA local, sin nube</small></div>
+      <div class="fact"><b class="mono">0</b><small>soldaduras</small></div>
+      <div class="fact"><b class="mono">1</b><small>pieza electrónica</small></div>
+    </div>
+  </div>
+  <div class="device-wrap">
+    <div class="device" aria-label="Simulación de la pantalla del robot">
+      <div class="scr"><canvas id="heroFace" width="640" height="480" role="img" aria-label="Cara animada de Bip"></canvas></div>
+      <div class="cam" aria-hidden="true"><em></em><i></i></div>
+    </div>
+    <div class="row"><button class="btn" id="heroSpeak" type="button">▶ Escuchar lo que dice</button></div>
+    <p class="device-cap">Así se verá en el CoreS3: pantalla de 2″ arriba y, debajo, la cámara y el sensor de proximidad.</p>
+  </div>
+</header>
+
+<aside class="firststep" aria-labelledby="fs-t">
+  <div class="eyebrow">Lo que te toca a ti ahora</div>
+  <h2 id="fs-t">Tu primer paso</h2>
+  <ol class="steps">
+    <li><span><b>Compra el M5Stack CoreS3 Lite</b> (referencia K128-LITE) en la tienda oficial de M5Stack o en su tienda oficial de AliExpress. Debería costarte unos 45–55 € con envío. Si ves precios de 70 € o más, es un revendedor.</span></li>
+    <li><span><b>Busca quién te imprima las piezas</b> mientras llega el pedido (suele tardar 1–3 semanas): un amigo con impresora, el espacio maker de tu biblioteca o un servicio de impresión online. Necesitan los 5 archivos STL principales que acompañan a esta guía.</span></li>
+    <li><span><b>Cuando llegue, enchúfalo por USB-C</b> y comprueba que la demo de fábrica arranca con imagen y sonido. Con eso empezamos la fase 1 del software juntos.</span></li>
+  </ol>
+</aside>
+
+<section aria-labelledby="s-idea">
+  <div class="prose stack">
+    <div class="eyebrow">La idea</div>
+    <h2 id="s-idea">Qué hace a Bip inteligente y no solo reactivo</h2>
+    <p>Hoy, casi todos los asistentes funcionan como un timbre: no hacen nada hasta que les hablas. Eso es ser <b>reactivo</b>. Bip se parece más a una mascota con la cabeza ocupada: sus sentidos están siempre encendidos, guarda memoria de lo que pasa, tiene un ánimo que cambia con las horas y cada pocos minutos se pregunta <i>«¿hago algo?»</i>. Si llevas dos horas sin moverte del ordenador, te lo dice sin que se lo pidas.</p>
+    <p>Todo funciona con inteligencia artificial local: nada sale de tu casa y no hay cuotas. El trabajo se reparte en tres capas. Las dos primeras viven dentro del robot. La tercera vive en tu PC, con un modelo de IA que ve imágenes y que solo se pone a pensar cuando merece la pena.</p>
+  </div>
+  <div class="layers">
+    <div class="layer">
+      <div class="where">En el robot</div>
+      <h3>Cuerpo</h3>
+      <p class="muted">Lo que siente y cómo se expresa.</p>
+      <ul>
+        <li>Cámara, 2 micrófonos, sensor de proximidad y de luz</li>
+        <li>Sensor de movimiento: sabe si lo coges o lo sacudes</li>
+        <li>Pantalla táctil: le puedes hacer caricias</li>
+        <li>Altavoz para sus pitidos</li>
+      </ul>
+    </div>
+    <div class="layer">
+      <div class="where">En el robot · al instante</div>
+      <h3>Instinto</h3>
+      <p class="muted">Reflejos que no necesitan pensar.</p>
+      <ul>
+        <li>Detecta caras y nota cuándo alguien habla, con redes neuronales diminutas dentro del chip</li>
+        <li>Parpadea y mira hacia lo que se mueve</li>
+        <li>Se asusta si lo sacudes</li>
+        <li>Te mira cuando te acercas</li>
+        <li>Se adormece cuando apagas la luz</li>
+      </ul>
+    </div>
+    <div class="layer">
+      <div class="where">En tu PC · IA local</div>
+      <h3>Mente</h3>
+      <p class="muted">Entiende, recuerda y decide.</p>
+      <ul>
+        <li>Pasa tu voz a texto y entiende lo que dices</li>
+        <li>Mira una foto cuando pasa algo y la describe</li>
+        <li>Lleva un diario y fichas de personas y cosas</li>
+        <li>Decide cuándo hablar y qué cara poner</li>
+      </ul>
+    </div>
+  </div>
+  <div class="diagram" role="img" aria-label="Esquema: el robot envía eventos por WiFi a la mente en el PC, que devuelve órdenes de cara, pitidos y subtítulos">
+    <svg viewBox="0 0 860 210" xmlns="http://www.w3.org/2000/svg">
+      <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="dg-ah"/></marker></defs>
+      <rect x="10" y="20" width="330" height="170" rx="12" class="dg-robot"/>
+      <text x="28" y="48" class="dg-t">Bip (CoreS3 Lite)</text>
+      <rect x="28" y="64" width="140" height="106" rx="8" class="dg-box"/>
+      <text x="40" y="88" class="dg-t">Sentidos</text>
+      <text x="40" y="110" class="dg-s">cámara · micros</text>
+      <text x="40" y="128" class="dg-s">proximidad · luz</text>
+      <text x="40" y="146" class="dg-s">movimiento · tacto</text>
+      <rect x="182" y="64" width="140" height="106" rx="8" class="dg-box"/>
+      <text x="194" y="88" class="dg-t">Instinto</text>
+      <text x="194" y="110" class="dg-s">ojos, reflejos,</text>
+      <text x="194" y="128" class="dg-s">detectar voz y</text>
+      <text x="194" y="146" class="dg-s">movimiento</text>
+      <path d="M168,117 L180,117" class="dg-a" marker-end="url(#ah)"/>
+      <path d="M342,80 C420,80 440,70 520,70" class="dg-a" marker-end="url(#ah)"/>
+      <text x="368" y="62" class="dg-l">eventos (WiFi)</text>
+      <text x="368" y="98" class="dg-s">«alguien se acerca» + foto</text>
+      <path d="M520,150 C440,150 420,140 342,140" class="dg-a" marker-end="url(#ah)"/>
+      <text x="368" y="170" class="dg-l">órdenes</text>
+      <text x="368" y="188" class="dg-s">cara · pitidos · subtítulo</text>
+      <rect x="520" y="20" width="330" height="170" rx="12" class="dg-box"/>
+      <text x="538" y="48" class="dg-t">Mente (IA local en tu PC)</text>
+      <text x="538" y="76" class="dg-s">1. Oír: voz → texto (Whisper)</text>
+      <text x="538" y="100" class="dg-s">2. Ver y pensar: Gemma 4 E4B</text>
+      <text x="538" y="124" class="dg-s">3. Recordar: diario y fichas</text>
+      <text x="538" y="148" class="dg-s">4. Ánimo: energía, curiosidad, compañía</text>
+      <text x="538" y="172" class="dg-s">5. Decidir: ¿hago algo ahora?</text>
+    </svg>
+  </div>
+</section>
+
+<section aria-labelledby="s-dia">
+  <div class="prose stack">
+    <div class="eyebrow">Ejemplo de comportamiento que programaremos</div>
+    <h2 id="s-dia">Un día con Bip</h2>
+    <p>Nadie le da órdenes en todo el día. Todo lo que hace sale de lo que nota, de lo que recuerda y de su ánimo.</p>
+  </div>
+  <ol class="day prose">
+    <li><time>08:52</time><div>Se enciende la luz y alguien se acerca. Reconoce tu cara, pone ojos contentos y saluda con un pitido. <div class="say">«¡Buenos días! Ayer dijiste que hoy tenías la reunión.»</div></div></li>
+    <li><time>10:40</time><div>Lleva dos horas viéndote quieto delante de la pantalla. Lo decide él solo. <div class="say">«Llevas un buen rato. ¿Estiramos?»</div></div></li>
+    <li><time>13:15</time><div>No hay nadie. Se aburre, mira a los lados, baja el brillo y apunta en su diario que has salido.</div></li>
+    <li><time>17:30</time><div>Ve una taza que no estaba ayer. Le pica la curiosidad y guarda tu respuesta en su memoria. <div class="say">«¿Eso es nuevo?»</div></div></li>
+    <li><time>23:05</time><div>Luz apagada y silencio. Se despide con un pitido grave y se duerme con la pantalla al mínimo.</div></li>
+  </ol>
+</section>
+
+<section aria-labelledby="s-voz">
+  <div class="prose stack">
+    <div class="eyebrow">Pruébalo aquí</div>
+    <h2 id="s-voz">Su cara y su idioma de pitidos</h2>
+    <p>Bip no usa voz humana. Cada palabra se convierte siempre en la misma melodía, así que su idioma es coherente: «hola» suena siempre igual. La emoción cambia el tono: contento es agudo y saltarín, triste es grave y lento, y una pregunta sube al final. Lo que dice aparece en subtítulos.</p>
+  </div>
+  <div class="bench voice">
+    <div class="scr-big"><canvas id="demoFace" width="640" height="480" role="img" aria-label="Cara de Bip controlada por la demo"></canvas></div>
+    <div class="stack">
+      <div class="field">
+        <span class="eyebrow">1 · Elige cómo se siente</span>
+        <div class="chips" id="emoChips" role="group" aria-label="Emociones"></div>
+      </div>
+      <div class="field">
+        <label for="sayText">2 · Escribe lo que quiere decir</label>
+        <input id="sayText" type="text" maxlength="90" value="¿Eso que hay en la mesa es nuevo?">
+      </div>
+      <div class="row">
+        <button class="btn primary" id="sayBtn" type="button">▶ Que lo diga</button>
+        <button class="btn" id="randBtn" type="button">Otra frase</button>
+      </div>
+      <p class="note">Es un prototipo que suena en tu navegador. En el robot sonará por su altavoz de 1 W y la mente elegirá la emoción y la frase por sí sola.</p>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="s-3d">
+  <div class="prose stack">
+    <div class="eyebrow">Diseño 3D · versión 1</div>
+    <h2 id="s-3d">La carcasa</h2>
+    <p>Cinco piezas distintas (seis contando las dos antenas). El CoreS3 entra por detrás en la cabeza, una tapa con rejilla lo sujeta y la cabeza encaja en un cuello inclinado 10° para que mire un poco hacia arriba, hacia ti. La base pesa poco: se le pegan dentro unas monedas para que no vuelque al tocar la pantalla.</p>
+  </div>
+  <div class="bench">
+    <div class="viewer" id="viewer">
+      <div class="fallback" id="vfallback">Cargando el modelo 3D…</div>
+      <div class="hint">arrastra para girar · rueda o pellizco para acercar</div>
+    </div>
+    <div class="vctl">
+      <label class="row" for="explode"><span class="eyebrow">Despiece</span> <input id="explode" type="range" min="0" max="100" value="0"></label>
+      <button class="btn" id="showDev" type="button" aria-pressed="true">CoreS3 visible</button>
+      <button class="btn" id="spinBtn" type="button" aria-pressed="true">Girar solo</button>
+    </div>
+    <div class="legend" id="legend"></div>
+  </div>
+  <div class="tbl">
+    <table class="wide">
+      <thead><tr><th>Archivo</th><th>Qué es</th><th>Orientación</th><th class="num">Tamaño (mm)</th><th class="num">PLA aprox.</th></tr></thead>
+      <tbody>
+        <tr><td class="file">1_cabeza.stl</td><td>Cabeza con ventana frontal, ranuras laterales y encajes</td><td>Cara frontal abajo</td><td class="num">63 × 74 × 22</td><td class="num">20 g</td></tr>
+        <tr><td class="file">2_tapa_trasera.stl</td><td>Tapa con rejilla para el sonido</td><td>Cara de fuera abajo</td><td class="num">63 × 74 × 6</td><td class="num">9 g</td></tr>
+        <tr><td class="file">3_antena_x2.stl</td><td>Antena con bola (imprime 2)</td><td>Bola abajo</td><td class="num">8 × 8 × 28</td><td class="num">1 g</td></tr>
+        <tr><td class="file">4_cuello.stl</td><td>Cuello con dos espigas</td><td>De pie</td><td class="num">20 × 20 × 30</td><td class="num">5 g</td></tr>
+        <tr><td class="file">5_base.stl</td><td>Base hueca para el lastre</td><td>Boca abajo</td><td class="num">Ø 88 × 30</td><td class="num">19 g</td></tr>
+        <tr><td class="file">opcional_servo_*.stl</td><td>Base y cuello para la fase con motor</td><td>Igual que las normales</td><td class="num">—</td><td class="num">25 g</td></tr>
+      </tbody>
+      <tfoot><tr><td colspan="3">Total versión básica · PLA 1,75 mm · capa 0,2 mm · 3 perímetros · relleno 20 % · sin soportes</td><td class="num">≈ 5–6 h</td><td class="num">≈ 55 g</td></tr></tfoot>
+    </table>
+  </div>
+  <p class="note prose">Gramos y horas son una cuenta a ojo a partir del volumen de cada pieza. El diseño usa las medidas oficiales del CoreS3 Lite (54 × 54 × 16,5 mm). Antes de imprimir la cabeza, mide tu aparato con una regla: si algo no cuadra, se cambia un número en el script de diseño y se regeneran todas las piezas en segundos. Esta página no puede descargar archivos: los STL y el script van aparte.</p>
+</section>
+
+<section aria-labelledby="s-compra">
+  <div class="prose stack">
+    <div class="eyebrow">Precios de noviembre de 2026, aproximados</div>
+    <h2 id="s-compra">Lista de la compra</h2>
+    <p>La única pieza electrónica es el CoreS3 Lite: una cajita de 5,4 cm que ya trae pantalla táctil, cámara, micrófonos, altavoz, sensores, WiFi y una batería pequeña. Por eso no hay que soldar ni cablear nada.</p>
+  </div>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Qué</th><th>Para qué sirve</th><th>Dónde</th><th class="num">Precio</th></tr></thead>
+      <tbody>
+        <tr><td><b>M5Stack CoreS3 Lite</b><br><span class="mono muted">K128-LITE</span></td><td>El robot entero: pantalla 2″ táctil (320 × 240), cámara de 0,3 MP, 2 micrófonos, altavoz de 1 W, sensores de proximidad, luz y movimiento, batería de 200 mAh, WiFi</td><td>Tienda oficial M5Stack o tienda oficial M5Stack en AliExpress</td><td class="num">45–55 €</td></tr>
+        <tr><td>Cable USB-C de datos</td><td>Darle corriente y cargarle programas</td><td>Probablemente ya tienes uno</td><td class="num">0–5 €</td></tr>
+        <tr><td>Cargador USB de móvil</td><td>Que esté encendido todo el día</td><td>Reutiliza uno viejo</td><td class="num">0 €</td></tr>
+        <tr><td>Impresión de las piezas</td><td>La carcasa (≈ 55 g de PLA)</td><td>Amigo, biblioteca o espacio maker / servicio online</td><td class="num">2–25 €</td></tr>
+        <tr><td>Lastre ≈ 120 g + masilla adhesiva</td><td>6–8 monedas o tuercas grandes pegadas dentro de la base</td><td>Lo que tengas por casa</td><td class="num">0–3 €</td></tr>
+        <tr><td>4 tacos de goma o fieltro</td><td>Que no resbale en la mesa</td><td>Ferretería o bazar</td><td class="num">2 €</td></tr>
+        <tr><td>Servo SG90 <span class="tag opt">opcional</span></td><td>Fase 6: que gire la cabeza hacia quien habla</td><td>Amazon, AliExpress (packs de 2–5)</td><td class="num">3–8 €</td></tr>
+        <tr><td>Cable Grove a dupont macho <span class="tag opt">opcional</span></td><td>Conectar el servo al puerto A del CoreS3</td><td>Amazon, AliExpress</td><td class="num">3 €</td></tr>
+      </tbody>
+      <tfoot><tr><td colspan="3">Total versión básica (sin opcionales)</td><td class="num">≈ 50–80 €</td></tr></tfoot>
+    </table>
+  </div>
+  <div class="prose stack">
+    <h3>Herramientas</h3>
+    <p>Ni soldador ni multímetro. Basta con una lima de uñas o lija fina para repasar los encajes, pegamento instantáneo por si las antenas quedan flojas, masilla adhesiva tipo Blu-Tack para el lastre y, solo para la fase del servo, un destornillador pequeño de estrella.</p>
+  </div>
+</section>
+
+<section aria-labelledby="s-montaje">
+  <div class="prose stack">
+    <div class="eyebrow">Unos 30 minutos</div>
+    <h2 id="s-montaje">Montaje paso a paso</h2>
+  </div>
+  <ol class="build prose">
+    <li><div><h3>Prueba el CoreS3 antes de tocar nada</h3><p>Enchúfalo por USB-C y enciéndelo con un clic en el botón del lado izquierdo (para apagar, mantenlo pulsado 6 segundos). Toca la pantalla, comprueba que suena y que la cámara muestra imagen en la demo.</p><p class="check"><b>Está bien si</b> todo funciona. Si algo falla, se devuelve ahora, antes de montarlo.</p></div></li>
+    <li><div><h3>Repasa las piezas impresas</h3><p>Quita los hilillos de plástico. Si la espiga del cuello entra muy justa en la cabeza o en la base, lija un poco la espiga, no el agujero.</p><p class="check"><b>Está bien si</b> el cuello entra con presión firme, sin martillo.</p></div></li>
+    <li><div><h3>Mete el CoreS3 en la cabeza</h3><p>Por detrás, con la pantalla hacia la ventana y la cámara abajo. El conector USB-C y el botón quedan en las ranuras de los lados.</p><p class="check"><b>Está bien si</b> ves la cámara entera por la ventana y puedes enchufar el cable y pulsar el botón.</p></div></li>
+    <li><div><h3>Cierra con la tapa trasera</h3><p>Entra a presión: los nervios pequeños del borde se aplastan un poco y la sujetan. Para abrirla, mete la uña en la muesca de abajo.</p><p class="check"><b>Está bien si</b> la tapa queda a ras y el CoreS3 no baila al sacudir la cabeza.</p></div></li>
+    <li><div><h3>Pon las antenas</h3><p>Empuja cada una en su agujero de arriba. Si bailan, una gota de pegamento instantáneo.</p></div></li>
+    <li><div><h3>Monta el cuello</h3><p>La espiga recta va a la base. La de arriba va a la cabeza, con la cara inclinada del cuello mirando hacia delante.</p><p class="check"><b>Está bien si</b> la cabeza mira un poco hacia arriba, no hacia el suelo.</p></div></li>
+    <li><div><h3>Ponle peso</h3><p>Pega unos 120 g de monedas o tuercas dentro de la base con masilla adhesiva y coloca los tacos de goma.</p><p class="check"><b>Está bien si</b> puedes tocar la pantalla con el dedo sin que se vaya hacia atrás.</p></div></li>
+    <li><div><h3>Pasa el cable</h3><p>El cable sale por el lateral de la cabeza; llévalo por detrás del cuello hasta el cargador o hasta tu PC.</p></div></li>
+  </ol>
+</section>
+
+<section aria-labelledby="s-soft">
+  <div class="prose stack">
+    <div class="eyebrow">Lo escribimos juntos con Claude Code</div>
+    <h2 id="s-soft">El software, por fases</h2>
+    <p>Tú conectas Bip a tu PC con el cable y yo escribo y cargo los programas; tú lo pruebas y me cuentas qué ves. Cada fase termina con una prueba sencilla, así sabemos que funciona antes de seguir. Los tiempos son orientativos.</p>
+  </div>
+  <ol class="phases prose">
+    <li class="phase"><div class="ph">Fase 1<small>1 tarde</small></div><div><h3>Hola, mundo</h3><p>Instalamos las herramientas gratuitas (VS Code y PlatformIO) y cargamos un primer programa que dibuja sus ojos y pita.</p><p class="check"><b>Prueba:</b> Bip parpadea y pita cuando le tocas la pantalla.</p></div></li>
+    <li class="phase"><div class="ph">Fase 2<small>1–2 tardes</small></div><div><h3>Instinto</h3><p>Los ojos siguen lo que se mueve delante de la cámara, se asusta si lo sacudes, te mira cuando te acercas y se adormece al apagar la luz. Todo dentro del robot, sin internet.</p><p class="check"><b>Prueba:</b> acercas la mano por un lado y la mira.</p></div></li>
+    <li class="phase"><div class="ph">Fase 3<small>1–2 tardes</small></div><div><h3>Oído y voz</h3><p>Cuando le hablas, manda el audio a tu PC. Allí se pasa a texto con Whisper, un modelo local piensa la respuesta y devuelve una emoción y una frase. Todo en tu ordenador. Bip la dice en pitidos con subtítulo.</p><p class="check"><b>Prueba:</b> le preguntas algo y contesta con sentido.</p></div></li>
+    <li class="phase"><div class="ph">Fase 4<small>2–3 tardes</small></div><div><h3>Vista y memoria</h3><p>Cuando pasa algo (alguien llega, la escena cambia) saca una foto y el modelo local la describe. Guarda un diario y fichas de personas y cosas en un archivo de tu PC.</p><p class="check"><b>Prueba:</b> al día siguiente recuerda algo que le contaste.</p></div></li>
+    <li class="phase"><div class="ph">Fase 5<small>2–3 tardes</small></div><div><h3>Vida propia</h3><p>Lo que lo hace inteligente. Un ánimo con energía, curiosidad y ganas de compañía que cambia solo. Cada pocos minutos repasa lo que sabe y decide si hace algo. Y unas normas de respeto: no interrumpir si hablas por teléfono, horario de silencio y modo privado.</p><p class="check"><b>Prueba:</b> durante un día, sin hablarle, hace al menos tres cosas por iniciativa propia que tienen sentido.</p></div></li>
+    <li class="phase"><div class="ph">Fase 6<small>opcional · 1 tarde</small></div><div><h3>Cuello que gira</h3><p>Con el servo SG90 y las piezas opcionales, gira la cabeza hacia quien habla.</p></div></li>
+    <li class="phase"><div class="ph">Fase 7<small>opcional</small></div><div><h3>Independizarlo del PC</h3><p>Pasar la mente a una Raspberry Pi 5 de 8 GB junto a la base, para que Bip siga despierto con el ordenador apagado. Piensa más despacio, pero sigue siendo todo local.</p></div></li>
+  </ol>
+</section>
+
+<section aria-labelledby="s-cerebro">
+  <div class="prose stack">
+    <div class="eyebrow">IA local · 0 € al mes</div>
+    <h2 id="s-cerebro">Dónde vive la mente</h2>
+    <p>Hay tres sitios posibles para una IA local. El truco es que la mente no esté pensando todo el rato: los reflejos los hace el chip del robot, y el modelo grande solo despierta cuando hay algo que entender. Por ejemplo, cuando alguien llega, alguien habla, la escena cambia o toca su repaso de cada pocos minutos.</p>
+  </div>
+  <div class="brains">
+    <div class="brain rec">
+      <span class="tag opt">Para empezar</span>
+      <h3>En tu PC</h3>
+      <div class="cost mono">0 € <small>extra</small></div>
+      <p class="note">Gemma 4 E4B, que entiende texto e imágenes, con llama.cpp u Ollama, y Whisper para el oído. Un modelo de este tamaño ocupa poca tarjeta gráfica y contesta en uno o dos segundos. Necesita el PC encendido.</p>
+    </div>
+    <div class="brain">
+      <span class="tag">Más adelante</span>
+      <h3>En una Raspberry Pi 5 de 8 GB</h3>
+      <div class="cost mono">≈ 120–150 € <small>una vez, a ojo</small></div>
+      <p class="note">Bip vive aunque apagues el PC. Con Gemma 4 E2B y visión va a unos 6 tokens por segundo, así que una respuesta corta tarda 5–10 s. Bien para su repaso de cada pocos minutos, algo lento para charlar.</p>
+    </div>
+    <div class="brain">
+      <span class="tag">Solo para reflejos</span>
+      <h3>Dentro del propio chip</h3>
+      <div class="cost mono">0 € <small>ya lo tiene</small></div>
+      <p class="note">El chip del CoreS3 tiene 16 MB de memoria y 8 MB de RAM. Caben redes diminutas para ver caras o notar voz, pero no una mente: los modelos de lenguaje más grandes que se han metido en este chip (unos 29 millones de parámetros) solo inventan cuentos cortos.</p>
+    </div>
+  </div>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Función</th><th>Modelo local</th><th>Dónde corre</th></tr></thead>
+      <tbody>
+        <tr><td>Reflejos: ver caras, notar que alguien habla</td><td>Redes diminutas de Espressif (ESP-DL y ESP-SR)</td><td>Chip del robot</td></tr>
+        <tr><td>Oír: voz a texto</td><td>Whisper, o Parakeet v3 si hace falta algo más ligero</td><td>PC</td></tr>
+        <tr><td>Ver y pensar: describir la foto, decidir qué hacer y qué decir</td><td>Gemma 4 E4B (en la Raspberry Pi, E2B)</td><td>PC</td></tr>
+        <tr><td>Memoria: diario y fichas de personas y cosas</td><td>Archivo de texto con búsqueda sencilla</td><td>PC</td></tr>
+        <tr><td>Hablar</td><td>Pitidos generados al momento, sin modelo</td><td>Chip del robot</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section aria-labelledby="s-alt">
+  <div class="prose stack">
+    <div class="eyebrow">Por qué esta pieza</div>
+    <h2 id="s-alt">Lo que comparé antes de elegir</h2>
+  </div>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Opción</th><th class="num">Precio aprox.</th><th>Por qué no, de momento</th></tr></thead>
+      <tbody>
+        <tr><td><b>M5Stack CoreS3 Lite</b> <span class="tag opt">elegida</span></td><td class="num">45–55 €</td><td>Todo en una pieza, sin soldar, con cámara y sensores. Es la base del robot StackChan, así que hay mucha gente usándolo.</td></tr>
+        <tr><td>Raspberry Pi Zero 2 W + placa Whisplay + cámara</td><td class="num">90–110 €</td><td>Muy buena opción, con Linux completo, pero son más piezas, el cable de la cámara es delicado y cuesta casi el doble.</td></tr>
+        <tr><td>StackChan oficial de M5Stack</td><td class="num">≈ 99 $ + envío</td><td>Viene casi hecho, con dos motores. Aprendes menos y cuesta más. Buen plan B si un día quieres algo ya montado.</td></tr>
+        <tr><td>Seeed XIAO ESP32S3 Sense + pantalla redonda</td><td class="num">35–40 €</td><td>Más barato, pero hay que soldar y cablear el altavoz. Mal punto de partida sin experiencia.</td></tr>
+        <tr><td>Reachy Mini</td><td class="num">300–450 $</td><td>Cabeza con motores y sin pantalla. Precioso, pero fuera del presupuesto y no tiene cara.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section aria-labelledby="s-priv">
+  <div class="prose stack">
+    <div class="eyebrow">Cámara y micrófono en casa</div>
+    <h2 id="s-priv">Privacidad</h2>
+    <ul class="plain">
+      <li>Nada sale de tu casa: todos los modelos funcionan en tu PC, sin nube.</li>
+      <li>Los reflejos (detectar movimiento o que alguien habla) se hacen dentro del robot y no salen de él.</li>
+      <li>Solo manda audio o una foto a tu PC cuando pasa algo, y las fotos no se guardan: se queda solo la descripción en texto.</li>
+      <li>Mientras envía algo, sus ojos lo muestran con un brillo distinto.</li>
+      <li>Si le tapas los ojos con la mano unos segundos, entra en modo privado y se duerme.</li>
+    </ul>
+  </div>
+</section>
+
+<section aria-labelledby="s-ref">
+  <div class="prose stack">
+    <div class="eyebrow">Para seguir leyendo</div>
+    <h2 id="s-ref">Referencias</h2>
+    <ul class="src">
+      <li><a href="https://docs.m5stack.com/en/core/CoreS3-Lite">Ficha técnica del CoreS3 Lite (M5Stack)</a></li>
+      <li><a href="https://docs.m5stack.com/en/core/CoreS3">Ficha técnica del CoreS3 (puertos, botones, cámara)</a></li>
+      <li><a href="https://shop.m5stack.com/products/m5stack-cores3-lite-esp32s3-iot-dev-kit">CoreS3 Lite en la tienda oficial</a></li>
+      <li><a href="https://shop.m5stack.com/products/stackchan-kawaii-co-created-open-source-ai-desktop-robot">StackChan, el robot oficial con el mismo cerebro</a></li>
+      <li><a href="https://github.com/inematds/robo-cores3-lite">robo-cores3-lite: proyecto de la comunidad con la misma idea (CoreS3 Lite + servidor en el PC)</a></li>
+      <li><a href="https://github.com/78/xiaozhi-esp32">xiaozhi-esp32: asistente de voz de código abierto compatible con el CoreS3</a></li>
+      <li><a href="https://www.pisugar.com/products/whisplay-hat-for-pi-zero-2w-audio-display">Whisplay HAT de PiSugar (la alternativa con Raspberry Pi)</a></li>
+      <li><a href="https://github.com/slvDev/esp32-ai">esp32-ai: un modelo de lenguaje de 29 millones de parámetros dentro de un ESP32-S3</a></li>
+      <li><a href="https://github.com/asinformatico/Tiny_ESP32_Neural_Terminal">Tiny ESP32 Neural Terminal: un transformer diminuto en un ESP32-S3</a></li>
+      <li><a href="https://huggingface.co/Cactus-Compute">Cactus Compute: modelos diminutos de voz y visión para dispositivos</a></li>
+      <li><a href="https://mjrovai.com/articles/slm-on-raspberry-pi-mtp/">Modelos pequeños en una Raspberry Pi 5, con mediciones (Marcelo Rovai)</a></li>
+    </ul>
+  </div>
+</section>
+
+</div>
+
+<script>
+/* ========================================================= cara de Bip */
+const EMOS = {
+  neutral:     {label:"Tranquilo",   w:60, h:74, r:20, dy:0,  happy:0, sad:0, asym:0, lx:0,  ly:0,  sleep:0, think:0},
+  contento:    {label:"Contento",    w:66, h:66, r:24, dy:-2, happy:1, sad:0, asym:0, lx:0,  ly:-2, sleep:0, think:0},
+  curioso:     {label:"Curioso",     w:60, h:74, r:20, dy:0,  happy:0, sad:0, asym:1, lx:12, ly:-4, sleep:0, think:0},
+  sorprendido: {label:"Sorprendido", w:68, h:90, r:34, dy:-4, happy:0, sad:0, asym:0, lx:0,  ly:0,  sleep:0, think:0},
+  triste:      {label:"Triste",      w:58, h:62, r:18, dy:12, happy:0, sad:1, asym:0, lx:0,  ly:8,  sleep:0, think:0},
+  pensando:    {label:"Pensando",    w:56, h:60, r:18, dy:-6, happy:0, sad:0, asym:.4,lx:16, ly:-12,sleep:0, think:1},
+  sueno:       {label:"Con sueño",   w:62, h:6,  r:3,  dy:10, happy:0, sad:0, asym:0, lx:0,  ly:0,  sleep:1, think:0},
+};
+const GLOW = "#4FE3C1", BG = "#05080B";
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+class Face {
+  constructor(){
+    this.p = {...EMOS.neutral}; this.target = EMOS.neutral; this.emo = "neutral";
+    this.blink = 1; this.nextBlink = performance.now() + 1500; this.blinkT = -1;
+    this.look = [0,0]; this.lookT = [0,0]; this.nextLook = 0;
+    this.sub = ""; this.subShown = 0; this.subUntil = 0;
+    this.speech = null; // {start, sylls:[{t,d}], text}
+  }
+  set(emo){ if(EMOS[emo]){ this.emo = emo; this.target = EMOS[emo]; } }
+  say(text, speech){ this.sub = text; this.speech = speech; this.subUntil = (speech ? speech.end : performance.now()+2500) + 2600; }
+  amp(now){
+    const s = this.speech; if(!s) return 0;
+    for(const y of s.sylls){ if(now >= y.t && now <= y.t + y.d){ const k=(now-y.t)/y.d; return Math.sin(Math.PI*k) * (0.55 + 0.45*y.v); } }
+    return 0;
+  }
+  update(now){
+    for(const k in this.target){ if(typeof this.target[k]==="number") this.p[k] += (this.target[k]-this.p[k])*0.16; }
+    if(this.blinkT < 0 && now > this.nextBlink && this.p.sleep < .5){ this.blinkT = now; }
+    if(this.blinkT >= 0){
+      const k = (now - this.blinkT)/170;
+      this.blink = k < .5 ? 1 - k*1.85 : Math.min(1, .075 + (k-.5)*1.85);
+      if(k >= 1){ this.blinkT = -1; this.blink = 1; this.nextBlink = now + 1800 + Math.random()*3600; }
+    }
+    if(now > this.nextLook){
+      this.lookT = reduceMotion ? [0,0] : [(Math.random()*2-1)*9, (Math.random()*2-1)*5];
+      this.nextLook = now + 1200 + Math.random()*2800;
+    }
+    this.look[0] += (this.lookT[0]-this.look[0])*0.08; this.look[1] += (this.lookT[1]-this.look[1])*0.08;
+    if(this.speech && now > this.speech.end + 50) this.speech = null;
+  }
+  draw(ctx, W, H, now){
+    const s = W/320; const p = this.p;
+    ctx.setTransform(1,0,0,1,0,0); ctx.fillStyle = BG; ctx.fillRect(0,0,W,H);
+    ctx.setTransform(s,0,0,s,0,0);
+    const a = this.amp(now);
+    const bob = a*3;
+    const cy = 104 + p.dy + p.ly*.6 + this.look[1] - bob;
+    const cx0 = 160 + p.lx + this.look[0];
+    const gap = 54;
+    for(const side of [-1,1]){
+      let w = p.w, h = p.h * this.blink;
+      if(p.asym){ const k = side<0 ? 1+.14*p.asym : 1-.16*p.asym; w*=k; h*=k; }
+      h = Math.max(h, 3.5);
+      const cx = cx0 + side*gap, y0 = cy - h/2;
+      ctx.save();
+      ctx.shadowColor = GLOW; ctx.shadowBlur = 16; ctx.fillStyle = GLOW;
+      roundRect(ctx, cx - w/2, y0, w, h, Math.min(p.r, h/2, w/2)); ctx.fill();
+      ctx.restore();
+      ctx.fillStyle = BG;
+      if(p.happy > .02){ // ojos en arco
+        ctx.beginPath(); ctx.ellipse(cx, cy + h*(1.25 - .62*p.happy), w*.8, h*.62, 0, 0, Math.PI*2); ctx.fill();
+      }
+      if(p.sad > .02){ // párpado caído hacia fuera
+        ctx.beginPath();
+        const ox = cx + side*(w/2+3), ix = cx - side*(w/2+3);
+        ctx.moveTo(ox, y0-3); ctx.lineTo(ix, y0-3); ctx.lineTo(ix, y0-3 + h*.08); ctx.lineTo(ox, y0 + h*.55*p.sad); ctx.closePath(); ctx.fill();
+      }
+      if(p.asym > .5 && side > 0){ ctx.fillRect(cx - w/2 - 3, y0 - 3, w + 6, h*.22 + 3); }
+    }
+    if(p.think > .5){
+      const t = now/380;
+      for(let i=0;i<3;i++){ ctx.globalAlpha = .35 + .65*Math.max(0, Math.sin(t - i*.7)); ctx.fillStyle = GLOW;
+        ctx.beginPath(); ctx.arc(146 + i*14, 176, 3.4, 0, Math.PI*2); ctx.fill(); }
+      ctx.globalAlpha = 1;
+    }
+    if(p.sleep > .5){
+      ctx.fillStyle = GLOW; ctx.font = "600 16px 'Chakra Petch', sans-serif";
+      const t = (now/1600)%1;
+      ctx.globalAlpha = 1 - t; ctx.fillText("z", 236 + t*14, 70 - t*26);
+      ctx.globalAlpha = 1 - ((t+.5)%1); ctx.fillText("z", 248 + ((t+.5)%1)*14, 62 - ((t+.5)%1)*26);
+      ctx.globalAlpha = 1;
+    }
+    // barra de voz
+    if(a > 0.01){
+      ctx.fillStyle = GLOW;
+      for(let i=0;i<9;i++){
+        const hh = 2 + a*14*Math.abs(Math.sin(now/55 + i*1.3));
+        ctx.globalAlpha = .85; ctx.fillRect(124 + i*8.4, 190 - hh/2, 4.4, hh);
+      }
+      ctx.globalAlpha = 1;
+    }
+    // subtítulo
+    if(this.sub && now < this.subUntil){
+      const total = this.sub.length;
+      let n = total;
+      if(this.speech){ const k = (now - this.speech.start)/(this.speech.end - this.speech.start); n = Math.max(0, Math.min(total, Math.ceil(k*total*1.05))); }
+      const txt = this.sub.slice(0, n);
+      const fade = Math.min(1, (this.subUntil - now)/600);
+      ctx.globalAlpha = fade; ctx.fillStyle = "#D8F7EE"; ctx.font = "500 12.5px 'IBM Plex Mono', monospace"; ctx.textAlign = "center";
+      wrapText(ctx, txt, 160, 214, 290, 14);
+      ctx.textAlign = "start"; ctx.globalAlpha = 1;
+    }
+  }
+}
+function roundRect(ctx,x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+function wrapText(ctx, text, x, y, maxW, lh){
+  const words = text.split(" "); const lines = []; let line = "";
+  for(const w of words){ const t = line ? line + " " + w : w; if(ctx.measureText(t).width > maxW && line){ lines.push(line); line = w; } else line = t; }
+  if(line) lines.push(line);
+  const start = y - (lines.length-1)*lh;
+  lines.forEach((l,i)=>ctx.fillText(l, x, start + i*lh));
+}
+
+/* ========================================================= idioma de pitidos */
+const VOICE = {
+  neutral:     {base:640, spread:1.0, tempo:92,  wave:"square",   glide:.35, vib:0,  end:0},
+  contento:    {base:860, spread:1.35,tempo:78,  wave:"square",   glide:.55, vib:0,  end:.2},
+  curioso:     {base:720, spread:1.1, tempo:98,  wave:"square",   glide:.4,  vib:0,  end:.6},
+  sorprendido: {base:980, spread:1.5, tempo:84,  wave:"square",   glide:.7,  vib:0,  end:.4},
+  triste:      {base:400, spread:.7,  tempo:150, wave:"triangle", glide:.6,  vib:6,  end:-.5},
+  pensando:    {base:560, spread:.8,  tempo:120, wave:"triangle", glide:.3,  vib:9,  end:0},
+  sueno:       {base:300, spread:.5,  tempo:185, wave:"triangle", glide:.5,  vib:4,  end:-.6},
+};
+const SCALE = [0,2,4,7,9,12,14,16];
+let actx = null;
+function audio(){ if(!actx){ const AC = window.AudioContext || window.webkitAudioContext; if(!AC) return null; actx = new AC(); } if(actx.state === "suspended") actx.resume(); return actx; }
+function hash(str){ let h = 2166136261; for(let i=0;i<str.length;i++){ h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+function syllables(word){ const m = word.match(/[aeiouáéíóúü]+/g); return Math.max(1, m ? m.length : 1); }
+
+function planSpeech(text, emo){
+  const v = VOICE[emo] || VOICE.neutral;
+  const tokens = text.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").match(/[a-zñ0-9]+|[?!.,;:]/g) || [];
+  const notes = []; let t = 0.04;
+  const isQ = /\?\s*$/.test(text.trim()), isEx = /!\s*$/.test(text.trim());
+  tokens.forEach((tok, wi) => {
+    if(/[?!.,;:]/.test(tok)){ t += (tok === "," ? .12 : .2); return; }
+    const n = syllables(tok);
+    for(let i=0;i<n;i++){
+      const h = hash(tok + "#" + i);
+      const step = SCALE[h % SCALE.length];
+      const f = v.base * Math.pow(2, (step*v.spread)/12);
+      const d = (v.tempo * (0.75 + ((h>>4)%6)/10)) / 1000;
+      const shape = (h>>8)%3; // 0 plano, 1 sube, 2 baja
+      const glide = ((h>>11)%100)/100 < v.glide ? (shape===1 ? 1.32 : shape===2 ? .72 : 1) : 1;
+      notes.push({t, d, f, f2: f*glide, v: ((h>>14)%100)/100});
+      t += d + .025;
+    }
+    t += .07;
+  });
+  if(notes.length){
+    const last = notes[notes.length-1];
+    if(isQ){ last.f2 = last.f * 1.6; last.d *= 1.4; }
+    else if(v.end){ last.f2 = last.f * (1 + v.end*.5); last.d *= 1.3; }
+    if(isEx){ notes.forEach(n => { n.f *= 1.12; n.f2 *= 1.12; }); }
+  }
+  return {notes, dur: t};
+}
+function speak(face, text, emo){
+  face.set(emo);
+  const plan = planSpeech(text, emo);
+  const now = performance.now();
+  const sylls = plan.notes.map(n => ({t: now + n.t*1000, d: n.d*1000, v: n.v}));
+  face.say(text, {start: now, end: now + plan.dur*1000, sylls});
+  const ac = audio(); if(!ac) return;
+  const v = VOICE[emo] || VOICE.neutral;
+  const t0 = ac.currentTime + 0.02;
+  const master = ac.createGain(); master.gain.value = emo === "sueno" ? .09 : .13;
+  const lp = ac.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 3200; lp.Q.value = .7;
+  master.connect(lp); lp.connect(ac.destination);
+  plan.notes.forEach(n => {
+    const o = ac.createOscillator(); o.type = v.wave;
+    const g = ac.createGain();
+    const s = t0 + n.t, e = s + n.d;
+    o.frequency.setValueAtTime(n.f, s);
+    o.frequency.exponentialRampToValueAtTime(Math.max(60, n.f2), e);
+    if(v.vib){ const l = ac.createOscillator(); const lg = ac.createGain(); l.frequency.value = v.vib; lg.gain.value = n.f*.04; l.connect(lg); lg.connect(o.frequency); l.start(s); l.stop(e); }
+    g.gain.setValueAtTime(0, s); g.gain.linearRampToValueAtTime(.9, s + .008); g.gain.setValueAtTime(.9, e - .02); g.gain.linearRampToValueAtTime(0, e);
+    o.connect(g); g.connect(master); o.start(s); o.stop(e + .01);
+  });
+}
+
+/* ========================================================= cabecera + demo */
+function setupCanvas(id){ const c = document.getElementById(id); return {c, ctx: c.getContext("2d")}; }
+const hero = new Face(), demo = new Face();
+const heroC = setupCanvas("heroFace"), demoC = setupCanvas("demoFace");
+const tex = document.createElement("canvas"); tex.width = 640; tex.height = 480; const texCtx = tex.getContext("2d");
+
+const SCRIPT = [
+  ["contento","¡Hola! Soy Bip."],
+  ["curioso","¿Qué es eso de la mesa?"],
+  ["pensando","Mmm… déjame pensar."],
+  ["sorprendido","¡Has llegado pronto!"],
+  ["triste","Hoy no ha venido nadie."],
+  ["contento","Llevas un buen rato. ¿Estiramos?"],
+  ["sueno","Buenas noches…"],
+];
+let si = 0, heroTimer = 0;
+function heroNext(now){
+  const [emo, text] = SCRIPT[si % SCRIPT.length]; si++;
+  hero.set(emo);
+  const plan = planSpeech(text, emo);
+  hero.say(text, {start: now, end: now + plan.dur*1000, sylls: plan.notes.map(n => ({t: now + n.t*1000, d: n.d*1000, v: n.v}))});
+  heroTimer = now + Math.max(4200, plan.dur*1000 + 3000);
+}
+document.getElementById("heroSpeak").addEventListener("click", () => {
+  const [emo, text] = SCRIPT[(si - 1 + SCRIPT.length) % SCRIPT.length];
+  speak(hero, text, emo); heroTimer = performance.now() + 6000;
+});
+
+let demoEmo = "curioso"; demo.set(demoEmo);
+const chips = document.getElementById("emoChips");
+Object.entries(EMOS).forEach(([k, e]) => {
+  const b = document.createElement("button"); b.type = "button"; b.className = "btn"; b.textContent = e.label; b.id = "emo-" + k;
+  b.setAttribute("aria-pressed", k === demoEmo ? "true" : "false");
+  b.addEventListener("click", () => {
+    demoEmo = k; demo.set(k);
+    chips.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b ? "true" : "false"));
+  });
+  chips.appendChild(b);
+});
+const sayText = document.getElementById("sayText");
+document.getElementById("sayBtn").addEventListener("click", () => { const t = sayText.value.trim() || "Bip bip"; speak(demo, t, demoEmo); });
+sayText.addEventListener("keydown", e => { if(e.key === "Enter"){ e.preventDefault(); document.getElementById("sayBtn").click(); } });
+const RAND = [
+  ["contento","¡Has vuelto! Te echaba de menos."],
+  ["curioso","¿Con quién hablabas por teléfono?"],
+  ["sorprendido","¡Qué susto! No me sacudas."],
+  ["triste","Se ha acabado la batería del mando…"],
+  ["pensando","Ayer me dijiste que hoy era el examen."],
+  ["sueno","Apago la luz y me duermo, ¿vale?"],
+  ["neutral","Llevas dos horas sin levantarte."],
+];
+let ri = 0;
+document.getElementById("randBtn").addEventListener("click", () => {
+  const [emo, text] = RAND[ri++ % RAND.length];
+  sayText.value = text; demoEmo = emo; demo.set(emo);
+  chips.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x.id === "emo-" + emo ? "true" : "false"));
+  speak(demo, text, emo);
+});
+
+const tickers = [];
+function loop(now){
+  if(now > heroTimer) heroNext(now);
+  hero.update(now); demo.update(now);
+  hero.draw(heroC.ctx, 640, 480, now);
+  demo.draw(demoC.ctx, 640, 480, now);
+  hero.draw(texCtx, 640, 480, now);
+  tickers.forEach(f => f(now));
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+window.__bipTex = tex; window.__bipTickers = tickers;
+</script>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js";
+
+const DATA = /*__VIEWER_DATA__*/null;
+const host = document.getElementById("viewer");
+const fallback = document.getElementById("vfallback");
+try {
+  const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  host.prepend(renderer.domElement);
+  fallback.remove();
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(28, 1, 1, 5000);
+  camera.up.set(0,0,1);
+  camera.position.set(215, 370, 215);
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.target.set(0, -6, 80);
+  controls.enableDamping = true; controls.minDistance = 150; controls.maxDistance = 900;
+  controls.autoRotate = !matchMedia("(prefers-reduced-motion: reduce)").matches; controls.autoRotateSpeed = 1.1;
+
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x8a94a3, 1.6));
+  const key = new THREE.DirectionalLight(0xffffff, 2.2); key.position.set(160, 260, 320); scene.add(key);
+  const rim = new THREE.DirectionalLight(0xffffff, .9); rim.position.set(-260, -200, 180); scene.add(rim);
+
+  // cama de impresora: rejilla de 10 mm
+  const css = getComputedStyle(document.documentElement);
+  const gridCol = () => new THREE.Color(getComputedStyle(document.documentElement).getPropertyValue("--grid").trim() || "#C9D1DA");
+  const grid = new THREE.GridHelper(240, 24, gridCol(), gridCol());
+  grid.rotation.x = Math.PI/2; scene.add(grid);
+
+  const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0)).buffer;
+  const meshes = [];
+  const legendSeen = new Map();
+  for(const p of DATA.parts){
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(b64(p.v)), 3));
+    g.setIndex(new THREE.BufferAttribute(p.i32 ? new Uint32Array(b64(p.i)) : new Uint16Array(b64(p.i)), 1));
+    const geo = toCreasedNormals(g, Math.PI/6);
+    const mat = new THREE.MeshStandardMaterial({color: p.color, roughness: p.kind === "device" ? .45 : .62, metalness: 0});
+    const m = new THREE.Mesh(geo, mat);
+    m.userData = {explode: new THREE.Vector3(...p.explode), kind: p.kind};
+    scene.add(m); meshes.push(m);
+    const label = {cabeza:"Cabeza", tapa:"Tapa trasera", cores3:"CoreS3 Lite (no se imprime)", antena:"Antenas", cuello:"Cuello", base:"Base"}[p.name] || p.name;
+    if(!legendSeen.has(label)) legendSeen.set(label, p.color);
+  }
+  // pantalla con la cara
+  const T = new THREE.CanvasTexture(window.__bipTex); T.colorSpace = THREE.SRGBColorSpace;
+  const c = DATA.screen.corners.map(v => new THREE.Vector3(...v));
+  const sg = new THREE.BufferGeometry();
+  sg.setAttribute("position", new THREE.Float32BufferAttribute([...c[0].toArray(), ...c[1].toArray(), ...c[2].toArray(), ...c[3].toArray()], 3));
+  sg.setAttribute("uv", new THREE.Float32BufferAttribute([1,0, 0,0, 0,1, 1,1], 2));
+  sg.setIndex([0,2,1, 0,3,2]);
+  const screen = new THREE.Mesh(sg, new THREE.MeshBasicMaterial({map:T, side:THREE.DoubleSide}));
+  screen.userData = {explode: new THREE.Vector3(...DATA.screen.explode), kind:"device"};
+  scene.add(screen); meshes.push(screen);
+
+  const legend = document.getElementById("legend");
+  legendSeen.forEach((col, label) => { const s = document.createElement("span"); s.innerHTML = `<i style="background:${col}"></i>${label}`; legend.appendChild(s); });
+
+  const base = meshes.map(m => m.position.clone());
+  let ex = 0, exT = 0, showDev = true;
+  const slider = document.getElementById("explode");
+  slider.addEventListener("input", () => { exT = slider.value/100; });
+  const devBtn = document.getElementById("showDev");
+  devBtn.addEventListener("click", () => { showDev = !showDev; devBtn.setAttribute("aria-pressed", String(showDev)); devBtn.textContent = showDev ? "CoreS3 visible" : "CoreS3 oculto"; });
+  const spinBtn = document.getElementById("spinBtn");
+  spinBtn.setAttribute("aria-pressed", String(controls.autoRotate));
+  spinBtn.addEventListener("click", () => { controls.autoRotate = !controls.autoRotate; spinBtn.setAttribute("aria-pressed", String(controls.autoRotate)); });
+  controls.addEventListener("start", () => { controls.autoRotate = false; spinBtn.setAttribute("aria-pressed","false"); });
+
+  function size(){ const w = host.clientWidth, h = host.clientHeight; renderer.setSize(w, h, false); camera.aspect = w/h;
+    camera.fov = w < 520 ? 38 : 28; camera.updateProjectionMatrix(); }
+  new ResizeObserver(size).observe(host); size();
+
+  let visible = true;
+  new IntersectionObserver(es => { visible = es[0].isIntersecting; }).observe(host);
+  const themeObs = new MutationObserver(() => { const g = gridCol(); grid.material.color = g; });
+  themeObs.observe(document.documentElement, {attributes:true, attributeFilter:["data-theme"]});
+
+  window.__bipTickers.push(() => {
+    if(!visible) return;
+    ex += (exT - ex) * .12;
+    meshes.forEach((m, i) => { m.position.copy(base[i]).addScaledVector(m.userData.explode, ex); if(m.userData.kind === "device") m.visible = showDev; });
+    T.needsUpdate = true;
+    controls.update();
+    renderer.render(scene, camera);
+  });
+} catch(err) {
+  fallback.textContent = "Tu navegador no ha podido mostrar el modelo 3D. Los archivos STL se abren en cualquier programa de impresión (Cura, PrusaSlicer, Bambu Studio).";
+  console.error(err);
+}
+</script>

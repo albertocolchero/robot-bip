@@ -1,0 +1,9 @@
+# general
+node_modules/
+.DS_Store
+*.log
+
+# carcasa: archivos intermedios
+bip/build/
+bip/page/body_iphone.html
+__pycache__/

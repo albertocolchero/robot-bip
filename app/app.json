@@ -1,0 +1,51 @@
+{
+  "expo": {
+    "name": "Bip",
+    "slug": "bip",
+    "version": "1.0.0",
+    "orientation": "landscape",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#000000",
+    "ios": {
+      "supportsTablet": false,
+      "requireFullScreen": true,
+      "bundleIdentifier": "com.albertocolchero.bip",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIStatusBarHidden": true,
+        "UIViewControllerBasedStatusBarAppearance": false
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#000000",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "backgroundColor": "#000000"
+    },
+    "plugins": [
+      [
+        "expo-audio",
+        {
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#000000",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 160
+        }
+      ],
+      "expo-asset"
+    ]
+  }
+}
