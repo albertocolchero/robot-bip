@@ -22,8 +22,8 @@ Se compila en la nube de Expo y se instala con TestFlight, usando la cuenta de d
 
 ```powershell
 cd $HOME\Desktop\robot-bip\app
-npx eas-cli@latest login
-npx eas-cli@latest build --platform ios --profile production --auto-submit
+npx.cmd eas-cli@latest login
+npx.cmd eas-cli@latest build --platform ios --profile production --auto-submit
 ```
 
 La primera vez pide la cuenta de Expo y la de Apple, crea los certificados y da de alta la app en App Store Connect. Después, en App Store Connect: **TestFlight → Pruebas internas → +**, crea un grupo, añádete y activa la distribución automática. En el iPhone, instala **TestFlight** desde la App Store y desde ahí instala Bip.
@@ -32,5 +32,5 @@ La primera vez pide la cuenta de Expo y la de Apple, crea los certificados y da 
 
 ```powershell
 cd $HOME\Desktop\robot-bip\app
-npx expo start --web
+npx.cmd expo start --web
 ```
