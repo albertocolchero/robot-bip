@@ -43,26 +43,33 @@ export type PartialThought = { part: number; emo: EmotionName; text: string; don
 export type SpeakFn = (emo: EmotionName, text: string) => void;
 export type DurationFn = (text: string, emo: EmotionName) => number;
 
-/** Cuánto hay que esperar a tener para decir un trozo (y dónde cortar). Devuelve hasta qué letra, o -1. */
-export function chunkEnd(rest: string, done: boolean): number {
+/** Dónde cortar lo que ya tiene escrito para decirlo de una vez. Devuelve hasta qué letra, o -1 (esperar).
+ *  - Si ya ha terminado de escribir: todo.
+ *  - Si no: hasta la última frase completa ("¡Claro! La Luna está lejos. Y además" → hasta "lejos.").
+ *  - Solo para empezar (first), vale también una coma tras unas palabras, para no hacerte esperar. */
+export function speakableEnd(rest: string, done: boolean, first: boolean): number {
   if (done) return rest.length;
-  // final de frase: "¡Hola! ...", "Claro. ..."
-  const sentence = rest.match(/^.*?[.!?…]["»”)]?\s/);
-  if (sentence && sentence[0].trim().length > 1) return sentence[0].length;
-  // una coma o dos puntos, si ya lleva unas cuantas palabras: "Pues mira, la Luna está ..."
-  const clause = rest.match(/^.*?[,;:]\s/);
-  if (clause && clause[0].trim().split(/\s+/).length >= 5) return clause[0].length;
-  // una frase larga sin puntuación: a las 9 palabras
+  let end = -1;
+  const re = /[.!?…]["»”)]?\s/g;
+  for (let m = re.exec(rest); m; m = re.exec(rest)) end = m.index + m[0].length;
+  if (end > 1 && rest.slice(0, end).trim().length > 1) return end;
+  if (first) {
+    const clause = rest.match(/^.*?[,;:]\s/);
+    if (clause && clause[0].trim().split(/\s+/).length >= 4) return clause[0].length;
+  }
+  // una frase muy larga sin puntuación: no esperar eternamente
   const words = rest.split(' ');
-  if (words.length > 10) return words.slice(0, 9).join(' ').length + 1;
+  if (words.length > 18) return words.slice(0, 16).join(' ').length + 1;
   return -1;
 }
 
+type Part = { text: string; done: boolean; emo: EmotionName; said: number };
+
 export class StreamSpeech {
-  /** Lo que ya se ha mandado a decir de cada parte de la respuesta. */
-  private spoken: string[] = [];
+  /** Cada parte de la respuesta (por ejemplo, "Déjame que lo mire" y luego la respuesta). */
+  private parts: Part[] = [];
   private busyUntil = 0;
-  private timers: ReturnType<typeof setTimeout>[] = [];
+  private timer: ReturnType<typeof setTimeout> | null = null;
   private cancelled = false;
 
   constructor(
@@ -78,51 +85,72 @@ export class StreamSpeech {
 
   /** ¿Ha dicho (o va a decir) ya algo? */
   get started() {
-    return this.spoken.some((x) => x.trim().length > 0);
+    return this.parts.some((p) => p && p.said > 0);
   }
 
   /** Llega un trozo más de la respuesta que está escribiendo la mente. */
   feed(p: PartialThought) {
     if (this.cancelled) return;
-    const prev = this.spoken[p.part] ?? '';
-    if (!p.text.startsWith(prev)) return;
-    const rest = p.text.slice(prev.length);
-    const end = chunkEnd(rest, p.done);
-    if (end <= 0) return;
-    this.spoken[p.part] = prev + rest.slice(0, end);
-    const chunk = rest.slice(0, end).trim();
-    if (chunk) this.say(p.emo, chunk);
+    const cur = this.parts[p.part] ?? { text: '', done: false, emo: p.emo, said: 0 };
+    if (p.text.length < cur.said) return;
+    Object.assign(cur, { text: p.text, done: p.done, emo: p.emo });
+    this.parts[p.part] = cur;
+    this.pump();
   }
 
-  /** Ya ha terminado de pensar: dice lo que falte de la frase final. false si no había empezado a hablar. */
+  /** Ya ha terminado de pensar: dice lo que falte. false si no había empezado a hablar. */
   finish(emo: EmotionName, text: string): boolean {
     if (this.cancelled || !this.started) return false;
-    const prev = this.spoken[this.spoken.length - 1] ?? '';
-    // si la frase final no es la que estaba diciendo (por ejemplo, tras "Déjame que lo mire"), la dice entera
-    const rest = text.startsWith(prev) ? text.slice(prev.length).trim() : text.trim();
-    if (rest) this.say(emo, rest);
+    const last = this.parts[this.parts.length - 1];
+    if (last && text.startsWith(last.text.slice(0, last.said))) {
+      Object.assign(last, { text, done: true, emo });
+    } else {
+      // la frase final no es la que estaba diciendo (por ejemplo, tras "Déjame que lo mire"): entera
+      this.parts.push({ text, done: true, emo, said: 0 });
+    }
+    this.pump();
     return true;
   }
 
   /** Le han interrumpido (o va a jugar): no dice lo que le quedaba. */
   cancel() {
     this.cancelled = true;
-    this.timers.forEach(clearTimeout);
-    this.timers = [];
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
   }
 
-  private say(emo: EmotionName, chunk: string) {
+  /** Si no está hablando, dice de una vez todo lo que ya tenga listo. */
+  private pump() {
+    if (this.cancelled) return;
     const now = this.now();
-    const start = Math.max(now, this.busyUntil);
-    this.busyUntil = start + this.duration(chunk, emo) * 1000 + 250;
-    if (start <= now) {
-      this.speak(emo, chunk);
-    } else {
-      this.timers.push(
-        setTimeout(() => {
-          if (!this.cancelled) this.speak(emo, chunk);
-        }, start - now),
-      );
+    if (now < this.busyUntil) {
+      this.wakeAt(this.busyUntil - now);
+      return;
     }
+    for (const part of this.parts) {
+      if (!part) continue;
+      const rest = part.text.slice(part.said);
+      if (!rest.trim()) {
+        if (part.done) continue;
+        return; // esta parte aún no ha terminado: esperar
+      }
+      const end = speakableEnd(rest, part.done, !this.started);
+      if (end <= 0) return;
+      part.said += end;
+      const chunk = rest.slice(0, end).trim();
+      if (!chunk) continue;
+      this.busyUntil = now + this.duration(chunk, part.emo) * 1000 + 200;
+      this.speak(part.emo, chunk);
+      this.wakeAt(this.busyUntil - now);
+      return;
+    }
+  }
+
+  private wakeAt(ms: number) {
+    if (this.timer) return;
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      this.pump();
+    }, Math.max(0, ms));
   }
 }

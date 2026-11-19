@@ -7,7 +7,7 @@ import { nameFrom } from '../src/brain/memory';
 import { People } from '../src/brain/people';
 import { parseClock, parseDuration, parseTimer, sayDuration } from '../src/brain/timers';
 import { isNo, isYes } from '../src/brain/talk';
-import { StreamSpeech, chunkEnd, partialField } from '../src/brain/streamSpeech';
+import { StreamSpeech, partialField, speakableEnd } from '../src/brain/streamSpeech';
 
 let fails = 0;
 function check(what: string, got: unknown, want: unknown) {
@@ -142,10 +142,11 @@ check('campo a medias', partialField('{"emocion":"feliz","frase":"Hola, qu', 'fr
 check('campo cerrado', partialField('{"emocion":"feliz","frase":"¡Hola!"}', 'frase'), { value: '¡Hola!', done: true });
 check('comillas escapadas', partialField('{"frase":"Dijo \\"sí\\" y', 'frase'), { value: 'Dijo "sí" y', done: false });
 check('emoción aún sin cerrar', partialField('{"emocion":"fel', 'emocion'), { value: 'fel', done: false });
-check('corta tras «¡Hola!»', chunkEnd('¡Hola! Me alegra', false), 7);
-check('no corta en una coma corta', chunkEnd('Pues mira, la', false), -1);
-check('corta en una coma tras 5 palabras', chunkEnd('Pues mira lo que te digo, la Luna', false) > 0, true);
-check('frase sin terminar: espera', chunkEnd('Hoy hace un día', false), -1);
+check('empieza tras «¡Hola!»', speakableEnd('¡Hola! Me alegra', false, true), 7);
+check('coge todas las frases completas de una vez', speakableEnd('¡Hola! Me alegra verte. Hoy', false, false), 24);
+check('al empezar, vale una coma tras unas palabras', speakableEnd('Pues mira lo que te digo, la Luna', false, true) > 0, true);
+check('en medio, una coma no basta: espera', speakableEnd('Pues mira lo que te digo, la Luna', false, false), -1);
+check('frase sin terminar: espera', speakableEnd('Hoy hace un día', false, true), -1);
 {
   const said: string[] = [];
   let fake = 0;
@@ -153,8 +154,9 @@ check('frase sin terminar: espera', chunkEnd('Hoy hace un día', false), -1);
   const full = '¡Claro que sí! La Luna está a unos 384.000 kilómetros de la Tierra.';
   for (let i = 1; i <= full.length; i++) s.feed({ part: 0, emo: 'contento', text: full.slice(0, i), done: i === full.length });
   check('empieza a hablar con el primer trozo', said[0], '¡Claro que sí!');
-  fake = 99_999; // ya ha pasado el tiempo: lo que esperaba turno, se ha dicho
+  fake = 99_999; // ya ha acabado de decir el primer trozo
   check('dice todo, sin repetir', s.finish('contento', full), true);
+  check('el resto, de una vez (no a trocitos)', said, ['¡Claro que sí!', 'La Luna está a unos 384.000 kilómetros de la Tierra.']);
 }
 {
   const said: string[] = [];
