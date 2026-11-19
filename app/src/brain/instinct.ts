@@ -200,7 +200,7 @@ export class Instinct {
   /** Te acabas de despedir ("adiós", "nada más"): tras contestar, cierra la charla. */
   private closing = false;
   /** Cómo va el oído (para la pestaña «Estado» de los ajustes). */
-  hearing = { partials: 0, finals: 0, ignored: 0, lastAt: 0, lastText: '', errors: 0, lastError: '', toldAt: -Infinity, level: 0, loudest: 0, echoes: 0, interrupts: 0 };
+  hearing = { partials: 0, finals: 0, ignored: 0, lastAt: 0, lastText: '', errors: 0, lastError: '', toldAt: -Infinity, level: 0, loudest: 0, echoes: 0, interrupts: 0, engine: 'el de siempre' };
   /** ¿Se le puede interrumpir mientras habla? (sigue escuchando mientras pita) */
   bargeIn = true;
   private bargeIns: number[] = [];
@@ -259,6 +259,7 @@ export class Instinct {
       `Micrófono: nivel ${Math.round(h.level * 100)} % (máximo reciente ${Math.round(h.loudest * 100)} %)`,
       h.lastAt ? `Oído: lo último que oyó fue ${ago(h.lastAt)}: «${h.lastText.slice(0, 40)}»` : 'Oído: aún no ha entendido ninguna palabra',
       `Frases entendidas: ${h.finals} · ignoradas por no ser para él: ${h.ignored}`,
+      `Oído: ${h.engine}`,
       h.errors ? `Fallos del dictado del iPhone: ${h.errors} (último: ${h.lastError})` : 'Fallos del dictado del iPhone: ninguno',
       `Cerebro: ${mind}`,
       `Caras delante: ${this.people.faceCount()}${here.length ? ` (reconoce a ${joinNames(here)})` : ''} · mirándole: ${this.attending ? 'sí' : 'no'}`,
@@ -838,6 +839,12 @@ export class Instinct {
   }
 
   onHear(e: HearEvent) {
+    // qué oído usa (el nuevo de Apple, o el de siempre si este iPhone no puede)
+    if (e.engine) {
+      this.hearing.engine = e.engine === 'nuevo' ? 'el nuevo de Apple (iOS 26)' : `el de siempre${e.reason ? ` (${e.reason})` : ''}`;
+      this.log.add('oye', `oído: ${this.hearing.engine}`);
+      return;
+    }
     if (e.error) {
       // el dictado del iPhone está fallando: que se vea (y que lo diga, como mucho cada 10 minutos)
       this.hearing.errors++;

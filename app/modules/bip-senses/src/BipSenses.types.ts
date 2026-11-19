@@ -65,6 +65,9 @@ export type HearEvent = {
   text?: string;
   final?: boolean;
   error?: string;
+  /** Qué oído usa: "nuevo" (el de iOS 26) o "clasico" (el de siempre), y por qué no el nuevo. */
+  engine?: 'nuevo' | 'clasico';
+  reason?: string;
 };
 
 /** Volumen de lo que suena, cada décima de segundo. */

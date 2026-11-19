@@ -562,6 +562,10 @@ final class BipEars {
   private var lastText = ""
   private var lastChange: CFTimeInterval = 0
   private var timer: Timer?
+  /// El oído nuevo (iOS 26+). Mientras se prepara, y si falla, se usa el de siempre.
+  private var modern: AnyObject?
+  private var modernReady = false
+  private var localeId = "es-ES"
 
   /// Todo se llama en el hilo principal.
   func start(localeId: String, completion: (Bool, String?) -> Void) {
@@ -579,6 +583,7 @@ final class BipEars {
       completion(false, "sin-modelo-local"); return
     }
     recognizer = rec
+    self.localeId = localeId
 
     do {
       try BipAudioSession.activate()
@@ -592,8 +597,14 @@ final class BipEars {
         guard let self = self else { return }
         self.lock.lock()
         let current = self.request
+        let useModern = self.modernReady && !self.paused
+        let modern = self.modern
         self.lock.unlock()
-        current?.append(buffer)
+        if useModern {
+          if #available(iOS 26.0, *), let m = modern as? BipModernEars { m.feed(buffer) }
+        } else {
+          current?.append(buffer)
+        }
         self.meter(buffer)
       }
       engine.prepare()
@@ -609,6 +620,50 @@ final class BipEars {
       self?.checkSilence()
     }
     completion(true, nil)
+    // mientras tanto, prepara el oído nuevo; si está listo, se cambia a él
+    if #available(iOS 26.0, *) { startModern() }
+  }
+
+  @available(iOS 26.0, *)
+  private func startModern() {
+    let m = BipModernEars()
+    m.onText = { [weak self] text, isFinal in
+      guard let self = self, self.running, self.modernReady, !self.paused else { return }
+      self.onHear?(["text": text, "final": isFinal])
+    }
+    m.onFail = { [weak self] reason in
+      guard let self = self else { return }
+      self.lock.lock()
+      self.modernReady = false
+      self.modern = nil
+      self.lock.unlock()
+      self.onHear?(["engine": "clasico", "reason": reason])
+      self.startTask() // vuelve al oído de siempre
+    }
+    lock.lock()
+    modern = m
+    lock.unlock()
+    let locale = localeId
+    Task { [weak self] in
+      let ok = await m.start(localeId: locale)
+      await MainActor.run {
+        guard let self = self else { return }
+        guard ok, self.running else {
+          if !ok { self.onHear?(["engine": "clasico", "reason": m.lastProblem]) }
+          self.lock.lock()
+          self.modern = nil
+          self.lock.unlock()
+          if ok { m.stop() }
+          return
+        }
+        self.lock.lock()
+        self.modernReady = true
+        self.lock.unlock()
+        // ya no hace falta el de siempre
+        self.cancelTask()
+        self.onHear?(["engine": "nuevo"])
+      }
+    }
   }
 
   /// Volumen del sonido cada decima de segundo (para palmadas y musica). Hilo de audio.
@@ -638,13 +693,27 @@ final class BipEars {
     timer?.invalidate()
     timer = nil
     cancelTask()
+    lock.lock()
+    let modern = self.modern
+    self.modern = nil
+    modernReady = false
+    lock.unlock()
+    if #available(iOS 26.0, *), let m = modern as? BipModernEars { m.stop() }
     engine.inputNode.removeTap(onBus: 0)
     if engine.isRunning { engine.stop() }
   }
 
   func setPaused(_ value: Bool) {
     if paused == value { return }
+    lock.lock()
     paused = value
+    let modern = modernReady ? self.modern : nil
+    lock.unlock()
+    if #available(iOS 26.0, *), let m = modern as? BipModernEars {
+      // el oído nuevo sigue encendido: solo deja de recibir audio y tira lo que tuviera a medias
+      if value { m.discard() }
+      return
+    }
     if value { cancelTask() } else { startTask() }
   }
 
@@ -659,7 +728,7 @@ final class BipEars {
   }
 
   private func startTask() {
-    guard running, !paused, let rec = recognizer else { return }
+    guard running, !paused, !modernReady, let rec = recognizer else { return }
     cancelTask()
     let req = SFSpeechAudioBufferRecognitionRequest()
     req.shouldReportPartialResults = true
@@ -705,6 +774,10 @@ final class BipEars {
   /// Si llevas un momento callado, damos la frase por terminada (antes 1,1 s; ahora menos, para
   /// contestar antes; si la frase ya acaba en punto o interrogación, todavía menos).
   private func checkSilence() {
+    if modernReady {
+      if #available(iOS 26.0, *), running, !paused, let m = modern as? BipModernEars { m.tick() }
+      return
+    }
     guard running, !paused, !lastText.isEmpty else { return }
     let ended = lastText.hasSuffix("?") || lastText.hasSuffix(".") || lastText.hasSuffix("!")
     if CACurrentMediaTime() - lastChange > (ended ? 0.55 : 0.75) {
