@@ -12,6 +12,7 @@
   "submit": {
     "production": {
       "ios": {
+        "ascAppId": "6836614388",
         "appName": "Bip robot de escritorio",
         "language": "es-ES"
       }
