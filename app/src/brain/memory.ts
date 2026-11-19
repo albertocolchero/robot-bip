@@ -57,13 +57,18 @@ export function nameFrom(raw: string, loose = false): string | null {
   if (bare && words.length > 2) return null;
   const name: string[] = [];
   for (const w of words) {
-    if (!NAME_WORD.test(w) || NOT_NAMES.test(w) || NOT_NAMES_2.test(w) || name.length === 2) break;
+    if (!NAME_WORD.test(w) || NOT_NAMES.test(w) || NOT_NAMES_2.test(w) || NOT_NAMES_3.test(w) || name.length === 2) break;
     // el segundo nombre o apellido, solo si viene con mayúscula (así "Ana, encantada" no es un apellido)
     if (name.length === 1 && w.charAt(0) === w.charAt(0).toLowerCase()) break;
     name.push(w);
   }
   return name.length ? name.map(capitalize).join(' ') : null;
 }
+
+/** Órdenes que se le dan a Bip y que, dichas solas, parecían un nombre ("sorpréndeme" acabó siendo
+ *  una persona): verbos con "me"/"nos" pegado y palabras de lo que sabe hacer. */
+const NOT_NAMES_3 =
+  /^(sorpr[eé]ndeme|sorpr[eé]ndenos|dime|dinos|dame|danos|hazme|haznos|ponme|ponnos|cu[eé]ntame|cu[eé]ntanos|ens[eé][nñ]ame|expl[ií]came|ay[uú]dame|despi[eé]rtame|av[ií]same|recu[eé]rdame|esc[uú]chame|m[ií]rame|c[aá]ntame|b[aá]ilame|p[aá]same|qu[ií]tame|t[aá]pame|ens[eé][nñ]amela|baila|canta|juega|calla|c[aá]llate|duerme|despierta|fiesta|m[uú]sica|radio|luces|tele|youtube|spotify|sorpresa|chiste|chistes|adivinanza|juegos|tiempo|hora|noticias|temporizador|alarma)$/i;
 
 /** Palabras que nunca son un nombre, aunque vayan solas ("vamos", "claro", "gracias"...). */
 const NOT_NAMES_2 =

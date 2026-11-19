@@ -97,6 +97,11 @@ public class BipSensesModule: Module {
       BipEars.setMode(name)
     }
 
+    // Memoria del iPhone en bytes (6 GB en el 14, 8 GB en el 15 Pro): con 6 GB no caben Whisper y el cerebro a la vez
+    Function("memoryBytes") { () -> Double in
+      Double(ProcessInfo.processInfo.physicalMemory)
+    }
+
     AsyncFunction("playWav") { (base64: String, promise: Promise) in
       DispatchQueue.main.async {
         promise.resolve(self.voice.play(base64: base64))

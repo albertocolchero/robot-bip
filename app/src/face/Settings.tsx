@@ -237,6 +237,10 @@ export function Settings({ engine, instinct, first, onClose, onPreviewVoice }: P
                   key={k}
                   onPress={() => {
                     if (k === ear) return;
+                    if (k === 'whisper' && !instinct.whisperFits) {
+                      setEarNote(instinct.setEar(k)); // explica por qué no
+                      return;
+                    }
                     setEarState(k);
                     setEarNote(instinct.setEar(k));
                   }}
@@ -247,7 +251,8 @@ export function Settings({ engine, instinct, first, onClose, onPreviewVoice }: P
               ))}
             </View>
             <Text style={styles.dim}>{EARS.find(([k]) => k === ear)?.[2]}</Text>
-            <Text style={styles.label}>{instinct.earStatus() || earNote}</Text>
+            {!instinct.whisperFits && <Text style={styles.dim}>Whisper no está disponible en este iPhone: con 6 GB de memoria no caben Whisper y el cerebro a la vez.</Text>}
+            <Text style={styles.label}>{earNote && earNote.startsWith('En este iPhone') ? earNote : instinct.earStatus() || earNote}</Text>
             <Pressable
               onPress={() => {
                 setInterrupt(!interrupt);

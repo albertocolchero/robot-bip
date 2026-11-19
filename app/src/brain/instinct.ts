@@ -316,6 +316,7 @@ export class Instinct {
     this.life.onName = (name) => this.named(name, this.people.speakerTrack());
     this.life.extraNotes = () => [this.people.describe(), this.timersNote()].filter(Boolean).join(' ');
     this.life.surprise = () => this.surpriseHome();
+    this.forgetCommandNames();
 
     this.perception = new Perception((e) => this.onPerceive(e));
     this.games = new Games({
@@ -850,7 +851,7 @@ export class Instinct {
     const me = normalize(this.speakerName() ?? '');
     for (const name of this.people.names()) {
       const n = normalize(name).split(' ')[0];
-      if (!n || n === me) continue;
+      if (!n || n === me || this.isCommand(name, normalize(name))) continue;
       const re = new RegExp(`^(?:(?:oye|eh|mira|venga|ven)\\s+)?${n}\\b|\\b${n}$`);
       if (re.test(t)) return true;
     }
@@ -1156,6 +1157,12 @@ export class Instinct {
       this.answer('enamorado', `¡Hola, ${p.name}! Ya me acordaré de ti.`);
       return true;
     }
+    // una orden que entiende («sorpréndeme», «pon música», «¿qué hora es?») no es un nombre: deja la
+    // pregunta y que la orden siga su camino
+    if (this.isCommand(text, t)) {
+      this.asking = null;
+      return false;
+    }
     const no = isNo(text);
     const rest = text.replace(/^\s*(no|si|sí)(?=[\s,.!]|$)[,.!]?\s*/i, '');
     const nm = !isYes(text) || /\b(soy|me llamo)\b/i.test(text) ? nameFrom(rest, true) : null;
@@ -1402,6 +1409,31 @@ export class Instinct {
     }
   }
 
+  // ================================================================ órdenes que no son nombres
+  /** ¿Es una orden que Bip sabe hacer? (para no tomarla por un nombre) */
+  private isCommand(text: string, t: string): boolean {
+    if (!t) return false;
+    if (showAsk(t) || asksToPlay(t) || weatherQuestion(text) || parseTimer(text, new Date())) return true;
+    if (themeCommand(text, this.engine.theme)) return true;
+    if (this.home && looksLikeHome(t, this.homeNames)) return true;
+    const r = understand(text, { sleeping: false, now: new Date(), seesSomeone: true });
+    return !!(r && (r.fast || r.action));
+  }
+
+  /** Olvida a las "personas" cuyo nombre es en realidad una orden (antes, un «sorpréndeme» dicho justo después
+   *  de «¿eres…?» acababa siendo el nombre de alguien, y luego Bip creía que hablabas con esa persona). */
+  private forgetCommandNames() {
+    for (const p of [...this.people.persons]) {
+      if (!p.name || !this.isCommand(p.name, normalize(p.name))) continue;
+      this.people.forget(p.id);
+      this.log.add('caras', `olvida a «${p.name}»: no era un nombre, era una orden`);
+      if (this.memory.name && normalize(this.memory.name) === normalize(p.name)) {
+        this.memory.name = null;
+        saveMemory(this.memory);
+      }
+    }
+  }
+
   // ================================================================ si se cerró de golpe
   /** Mira si la última vez se cerró de golpe y por qué; lo apunta en el registro y lo enseña en pantalla.
    *  Si fue con Whisper escribiendo una frase, vuelve al oído de Apple. Devuelve el oído que usar. */
@@ -1432,8 +1464,20 @@ export class Instinct {
   /** El oído que tiene puesto el iPhone ahora (con Whisper elegido, el de Apple hasta que Whisper esté listo). */
   private nativeEar: Ear = 'apple-nuevo';
 
+  /** ¿Cabe Whisper junto al cerebro? En iPhones de 6 GB (el 14) no: la app se cerraba al pensar.
+   *  (Antes de la 1.6.2 la app no sabe cuánta memoria hay: entonces se deja probar.) */
+  get whisperFits(): boolean {
+    const bytes = BipSenses.memoryBytes?.();
+    return !bytes || bytes >= 7e9;
+  }
+
   /** Elige el oído antes de que el iPhone empiece a oír. Whisper solo si su modelo ya está en el iPhone. */
   private prepareEar(ear: Ear) {
+    if (ear === 'whisper' && !this.whisperFits) {
+      ear = 'apple-nuevo';
+      savePrefs({ ear });
+      this.log.add('oye', 'Whisper no cabe en este iPhone junto al cerebro: vuelve al oído nuevo de Apple');
+    }
     let native: Ear = ear;
     if (ear === 'whisper') {
       const path = BipSenses.modelPath(WHISPER_FILE);
@@ -1449,6 +1493,9 @@ export class Instinct {
 
   /** Cambia de oído (Ajustes › Sonido). Devuelve qué poner en el panel. */
   setEar(ear: Ear): string {
+    if (ear === 'whisper' && !this.whisperFits) {
+      return 'En este iPhone (6 GB de memoria) no caben Whisper y el cerebro a la vez: se cerraría. Sigue con el de Apple.';
+    }
     savePrefs({ ear });
     this.log.add('oye', `oído elegido: ${ear}`);
     if (ear !== 'whisper') {

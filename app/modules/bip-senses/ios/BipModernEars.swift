@@ -69,11 +69,12 @@ final class BipModernEars: @unchecked Sendable {
       lastProblem = "no sabe en qué formato quiere el audio"
       return false
     }
-    // prioridad alta (escuchar no puede esperar a la cámara ni al cerebro) y el modelo cargado mientras
-    // la app esté abierta (al despertarse vuelve a oír al momento)
+    // prioridad alta (escuchar no puede esperar a la cámara ni al cerebro). El modelo se suelta en cuanto
+    // deja de usarse: en la 1.6.1 se quedaba cargado siempre y, sumado al cerebro, el iPhone 14 (6 GB) se
+    // quedaba sin memoria y la app se cerraba.
     let analyzer = SpeechAnalyzer(
       modules: [transcriber],
-      options: SpeechAnalyzer.Options(priority: .userInitiated, modelRetention: .processLifetime)
+      options: SpeechAnalyzer.Options(priority: .userInitiated, modelRetention: .whileInUse)
     )
     let (stream, continuation) = AsyncStream.makeStream(of: AnalyzerInput.self)
     // que el primer trozo de audio no tenga que esperar a que se prepare

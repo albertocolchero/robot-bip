@@ -16,6 +16,8 @@ declare class BipSensesModule extends NativeModule<BipSensesEvents> {
   setHearingPaused(paused: boolean): void;
   /** Qué oído usar la próxima vez que empiece a oír: "apple-nuevo", "apple" o "whisper" (no existe antes de la 1.6.1). */
   setHearingEngine?(name: HearingEngine): void;
+  /** Memoria del iPhone en bytes (no existe antes de la 1.6.2). */
+  memoryBytes?(): number;
   /** Reproduce un WAV en base64. Devuelve la duración en segundos (-1 si falla). */
   playWav(base64: string): Promise<number>;
   /** Corta lo que esté sonando (cuando le interrumpes). */

@@ -270,6 +270,13 @@ check('«pon el robot a cargar» → a la base', rephrase(normalize('pon el robo
 check('«apaga la tele» no se toca', rephrase(normalize('apaga la tele')), null);
 check('dirección sin http', cleanUrl('homeassistant.local:8123/'), 'http://homeassistant.local:8123');
 
+// ---------------------------------------------------------------- órdenes que no son nombres
+check('«sorpréndeme» no es un nombre', nameFrom('Sorpréndeme', true), null);
+check('«dime» no es un nombre', nameFrom('dime', true), null);
+check('«Luz» sí es un nombre', nameFrom('Luz', true), 'Luz');
+check('«Rosa» sí es un nombre', nameFrom('Rosa', true), 'Rosa');
+check('«Jaime» sí es un nombre', nameFrom('Jaime', true), 'Jaime');
+
 // ---------------------------------------------------------------- oído Whisper: limpiar lo que escribe
 check('frase normal', cleanWhisper(' ¿Qué hora es? '), '¿Qué hora es?');
 check('sin [Música]', cleanWhisper('[Música] Hola, Bip.'), 'Hola, Bip.');

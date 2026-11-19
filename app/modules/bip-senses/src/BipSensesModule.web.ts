@@ -168,6 +168,10 @@ class BipSensesModule extends NativeModule<BipSensesEvents> {
 
   setHearingEngine(_name: string) {}
 
+  memoryBytes() {
+    return 8e9;
+  }
+
   async playWav(base64: string): Promise<number> {
     this.audio?.pause();
     const audio = new Audio(`data:audio/wav;base64,${base64}`);
