@@ -10,7 +10,7 @@
 import BipSenses, { type HearEvent, type SeeEvent, type SeenFace, type SoundEvent } from '../../modules/bip-senses';
 import type { EmotionName, FaceEngine } from '../face/engine';
 import { saveTheme, themeCommand } from '../face/theme';
-import { setListenWhileSpeaking, speechSeconds } from '../voice/speak';
+import { setListenWhileSpeaking, speechSeconds, stopSpeaking as stopVoice } from '../voice/speak';
 import { dayKey, hhmm, spokenDay } from './dates';
 import { GAME_LIST, Games, asksToPlay, offersToPlay, type GameName } from './games';
 import { Island } from './island';
@@ -224,8 +224,8 @@ export class Instinct {
 
   /** Corta lo que esté diciendo (le has interrumpido). */
   private stopSpeaking() {
-    // cortar los pitidos en seco necesita la parte nativa nueva (1.6.0); con la 1.5.0, termina el trozo actual
-    if (typeof BipSenses.stopWav === 'function') BipSenses.stopWav();
+    // corta lo que suena y vacía la cola de la voz
+    stopVoice();
     this.life.cancelChain();
     this.streamer?.cancel();
     this.streamer = null;

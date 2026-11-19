@@ -10,7 +10,7 @@ import { isNo, isYes } from '../src/brain/talk';
 import { StreamSpeech, partialField, speakableEnd } from '../src/brain/streamSpeech';
 import { asksToPlay, offersToPlay } from '../src/brain/games';
 import { weatherQuestion } from '../src/brain/net';
-import { buildKit, cleanUrl, looksLikeHome, rephrase, type RawState } from '../src/brain/home';
+import { buildKit, cleanUrl, looksLikeHome, rephrase, vacuumCommand, type RawState } from '../src/brain/home';
 import { LightShow, chooseVideo, lightScript, parseYouTube, sayableTitle, showAsk, type LightInfo } from '../src/brain/shows';
 import { normalize } from '../src/brain/talk';
 import { cleanWhisper } from '../src/brain/whisperText';
@@ -334,6 +334,25 @@ check('la luz sabe cambiar de tono', kit.lights[0].temp, { min: 2900, max: 7000 
 const guessed = buildKit(states, null, normalize);
 check('sin saber las integraciones: adivina la tele', !!guessed.tvCast, true);
 check('sin saber las integraciones: adivina el altavoz', guessed.speaker, 'media_player.nest_mini');
+
+// ---------------------------------------------------------------- el robot aspirador, directamente
+const vac = (x: string) => vacuumCommand(normalize(x));
+for (const f of ['pon el aspirador', 'arranca el robot', 'pon a limpiar el robot', 'que limpie el robot', 'Bip, aspira la casa', 'pasa la aspiradora', 'empieza a limpiar con el robot', 'limpia el salón', 'pon el robot para que limpie', 'vuelve a pasar el robot', 'enciende el roborock']) {
+  check(`«${f}» → a limpiar`, vac(f), 'start');
+}
+for (const f of ['para el robot', 'manda el robot a la base', 'pon el robot a cargar', 'que vuelva el robot', 'apaga la aspiradora', 'guarda el robot']) {
+  check(`«${f}» → a la base`, vac(f), 'dock');
+}
+for (const f of ['qué hora es', 'pon música', 'limpia la pantalla', 'el robot de la película era muy gracioso', 'aspira el aire']) {
+  check(`«${f}» no es el robot`, vac(f), null);
+}
+check('«arranca el robot» es de la casa', looksLikeHome(normalize('arranca el robot')), true);
+const withIndicator = buildKit(
+  [...states, { entity_id: 'light.humidificador_indicator_light', state: 'on', attributes: { friendly_name: 'Humidificador Indicador', supported_color_modes: ['onoff'] } }],
+  { cast: [], atv: [] },
+  normalize,
+);
+check('sin el indicador del humidificador', withIndicator.lights.map((l) => l.id), ['light.luz_1', 'light.luz_2']);
 
 // ---------------------------------------------------------------- juego de luces: guion y que lo deja todo como estaba
 const lightsNow: LightInfo[] = kit.lights;

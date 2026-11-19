@@ -32,14 +32,36 @@ export function cleanUrl(raw: string) {
 }
 
 const VERBS =
-  /\b(enciende|encienda|enciendeme|apaga|apague|apagame|sube|baja|pon|ponme|quita|abre|cierra|activa|desactiva|arranca|para|deten|manda|aspira|limpia|bloquea|desbloquea|cambia)\b/;
+  /\b(enciende|encienda|enciendeme|encender|apaga|apague|apagame|apagar|sube|baja|pon|ponme|poner|quita|abre|cierra|activa|desactiva|arranca|arrancar|inicia|iniciar|para|deten|manda|aspira|limpia|bloquea|desbloquea|cambia)\b/;
 const THINGS =
   /\b(luz|luces|lampara|lamparas|bombilla|bombillas|foco|focos|enchufe|enchufes|robot|aspiradora|aspirador|roborock|tele|television|persiana|persianas|calefaccion|aire|ventilador|estufa|altavoz|brillo|todo|todas|casa|salon|cocina|dormitorio|habitacion|bano|pasillo|terraza)\b/;
 const QUESTIONS = /\b(esta encendid[ao]|estan encendid[ao]s|esta apagad[ao]|hay alguna luz|que luces|esta limpiando|cuanta bateria tiene el robot|donde esta el robot)\b/;
 
+/** El robot aspirador: «pon a limpiar el robot», «arranca la aspiradora», «aspira la casa» → empezar;
+ *  «para el robot», «manda el robot a la base», «que vuelva a cargar» → volver a la base. null si no va del robot.
+ *  (Bip se lo manda directamente: el asistente de Home Assistant no entiende muchas de estas frases y
+ *  algunas, como «pon el aspirador», las confunde con poner música.) Texto ya normalizado. */
+export function vacuumCommand(t: string): 'start' | 'dock' | null {
+  const robot = /\b(robot|robots|aspiradora|aspirador|roborock)\b/.test(t);
+  const again = /\b(vuelve|vuelva|volver) a (limpiar|aspirar|pasar)\b|\bpara que (limpie|aspire|pase)\b/.test(t);
+  const dock = /\b(para|parar|pare|paralo|deten|detente|detenlo|apaga|apagar|apagalo|vuelve|volver|vuelva|base|cargar|carga|guarda|guardalo|recoge|termina|terminar|basta)\b/.test(t);
+  const clean = /\b(limpia|limpiar|limpie|aspira|aspirar|aspire|pasa|pasar|pase|pon|ponlo|poner|ponga|arranca|arrancar|arrancalo|inicia|iniciar|empieza|empezar|enciende|encender|activa|activar|saca|sacar|manda a limpiar)\b/.test(t);
+  if (robot) {
+    if (again) return 'start';
+    if (dock) return 'dock';
+    if (clean) return 'start';
+    return null;
+  }
+  // sin nombrar al robot: «aspira la casa», «limpia el suelo», «pasa la aspiradora» (esta ya lleva aspiradora)
+  if (/\b(aspira|aspirar|aspire)\b/.test(t) && !/\b(aire|humo|olor)\b/.test(t)) return 'start';
+  if (/\b(limpia|limpiar|limpie)\b.*\b(casa|suelo|salon|piso|habitacion)\b/.test(t)) return 'start';
+  return null;
+}
+
 /** ¿Suena a orden (o pregunta) de la casa? names: nombres de aparatos y zonas que tiene Home Assistant. */
 export function looksLikeHome(t: string, names: string[] = []): boolean {
   if (QUESTIONS.test(t)) return true;
+  if (vacuumCommand(t)) return true;
   if (!VERBS.test(t)) return false;
   if (THINGS.test(t)) return true;
   return names.some((n) => n.length > 2 && new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(t));
@@ -72,9 +94,11 @@ export const SPOTIFY_APP = 'com.spotify.tv.android';
  *  (null si no se ha podido preguntar: entonces se adivina por el nombre). */
 export function buildKit(raw: RawState[], platforms: { cast: string[]; atv: string[] } | null, normalize: (s: string) => string): Kit {
   const alive = raw.filter((x) => x.state !== 'unavailable' && x.state !== 'unknown');
-  const lights = alive.filter((x) => x.entity_id.startsWith('light.') && !Array.isArray(x.attributes?.entity_id)).map(lightInfo);
-  const players = alive.filter((x) => x.entity_id.startsWith('media_player.'));
   const words = (x: RawState) => normalize(`${String(x.attributes?.friendly_name ?? '')} ${x.entity_id.replace(/[._]/g, ' ')}`);
+  // (fuera las lucecitas de los aparatos: el indicador del humidificador, pantallas, leds de estado)
+  const indicator = (x: RawState) => /\b(indicator|indicador|indicadora|led|leds|pantalla|display|backlight|retroiluminacion|estado)\b/.test(words(x));
+  const lights = alive.filter((x) => x.entity_id.startsWith('light.') && !Array.isArray(x.attributes?.entity_id) && !indicator(x)).map(lightInfo);
+  const players = alive.filter((x) => x.entity_id.startsWith('media_player.'));
   const tvish = (x: RawState) => x.attributes?.device_class === 'tv' || /\b(tv|tele|television|televisor)\b/.test(words(x));
   const speakerish = (x: RawState) => x.attributes?.device_class === 'speaker' || /\b(nest|mini|altavoz|speaker|audio|home)\b/.test(words(x));
   const remote = platforms ? (players.find((x) => platforms.atv.includes(x.entity_id)) ?? null) : null;
@@ -136,6 +160,24 @@ export class Home {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /** Manda el robot aspirador a limpiar o a su base. null si no hay ningún robot en casa. */
+  async vacuum(what: 'start' | 'dock'): Promise<HomeReply | null> {
+    const raw = (await this.call('/api/states')) as RawState[];
+    const v = raw.find((x) => x.entity_id.startsWith('vacuum.'));
+    if (!v) return null;
+    if (v.state === 'unavailable' || v.state === 'unknown') {
+      return { understood: true, speech: 'El robot no contesta ahora mismo. ¿Está encendido y con wifi?', done: false };
+    }
+    if (what === 'start') {
+      if (v.state === 'cleaning') return { understood: true, speech: 'El robot ya está limpiando.', done: false };
+      await this.service('vacuum', 'start', { entity_id: v.entity_id });
+      return { understood: true, speech: '¡Hecho! El robot se pone a limpiar.', done: true };
+    }
+    if (v.state === 'docked') return { understood: true, speech: 'El robot ya está en su base.', done: false };
+    await this.service('vacuum', 'return_to_base', { entity_id: v.entity_id });
+    return { understood: true, speech: 'Hecho: el robot vuelve a su base.', done: true };
   }
 
   /** Pide a Home Assistant que haga algo ("light", "turn_on", {...}). */
@@ -283,6 +325,11 @@ export class Home {
   /** Le pasa la frase al asistente de Home Assistant. understood=false si no era para él. */
   async ask(text: string): Promise<HomeReply> {
     const t = this.normalize(text);
+    const vac = vacuumCommand(t);
+    if (vac) {
+      const r = await this.vacuum(vac);
+      if (r) return r;
+    }
     // frases que el asistente entiende mal en castellano, dichas como sí las entiende
     const said = rephrase(t) ?? text;
     const j = (await this.call('/api/conversation/process', { text: said, language: 'es' })) as {
